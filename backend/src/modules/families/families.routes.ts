@@ -4,6 +4,7 @@ import { validateBody, validateQuery } from "../../common/validators/validate";
 import { authenticate } from "../../middleware/auth";
 import { requireFamilyRole } from "../../middleware/requireFamilyRole";
 import { familyPersonsRouter } from "../persons/persons.routes";
+import { familyRelationshipsRouter, familyTreeRouter } from "../relationships/relationships.routes";
 import * as familiesController from "./families.controller";
 import { createFamilySchema, listFamiliesQuerySchema, updateFamilySchema } from "./families.validation";
 
@@ -22,3 +23,6 @@ familiesRouter.put(
 familiesRouter.delete("/:familyId", requireFamilyRole(PermissionRole.OWNER), familiesController.deleteFamily);
 
 familiesRouter.use("/:familyId/persons", familyPersonsRouter);
+familiesRouter.use("/:familyId/relationships", familyRelationshipsRouter);
+// Registers GET /tree, /ancestors/:personId, /descendants/:personId under /:familyId.
+familiesRouter.use("/:familyId", familyTreeRouter);

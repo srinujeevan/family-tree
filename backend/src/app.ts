@@ -11,6 +11,7 @@ import { apiRateLimiter } from "./middleware/rateLimit";
 import { authRouter } from "./modules/auth/auth.routes";
 import { familiesRouter } from "./modules/families/families.routes";
 import { personsRouter } from "./modules/persons/persons.routes";
+import { relationshipsRouter } from "./modules/relationships/relationships.routes";
 import { usersRouter } from "./modules/users/users.routes";
 
 export function createApp(): Express {
@@ -45,9 +46,10 @@ export function createApp(): Express {
   app.use("/api/users", usersRouter);
   app.use("/api/families", familiesRouter);
   app.use("/api/persons", personsRouter);
+  app.use("/api/relationships", relationshipsRouter);
 
-  // Remaining feature routes (relationships, family tree, photos, events,
-  // family-level permissions) are mounted here in later phases.
+  // Remaining feature routes (photos, events, family-level permissions) are
+  // mounted here in later phases.
 
   app.use(notFoundHandler);
   app.use(errorHandler);

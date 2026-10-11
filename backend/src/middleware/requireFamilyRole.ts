@@ -1,13 +1,7 @@
 import type { NextFunction, Request, Response } from "express";
-import { PermissionRole } from "@prisma/client";
+import type { PermissionRole } from "@prisma/client";
 import { NotFoundError, UnauthorizedError } from "../common/errors/AppError";
-import { prisma } from "../config/prisma";
-
-const ROLE_RANK: Record<PermissionRole, number> = {
-  [PermissionRole.VIEWER]: 0,
-  [PermissionRole.EDITOR]: 1,
-  [PermissionRole.OWNER]: 2,
-};
+import { assertFamilyRole } from "../common/auth/familyPermission";
 
 /**
  * Requires at least `minRole` on the family identified by req.params[familyIdParam].
@@ -26,15 +20,7 @@ export function requireFamilyRole(minRole: PermissionRole, familyIdParam = "fami
       throw new NotFoundError("Family not found");
     }
 
-    const permission = await prisma.familyUserPermission.findUnique({
-      where: { familyId_userId: { familyId, userId: req.user.id } },
-    });
-
-    if (!permission || ROLE_RANK[permission.role] < ROLE_RANK[minRole]) {
-      throw new NotFoundError("Family not found");
-    }
-
-    req.familyRole = permission.role;
+    req.familyRole = await assertFamilyRole(req.user.id, familyId, minRole);
     next();
   };
 }

@@ -1,13 +1,8 @@
 import { PermissionRole, Prisma } from "@prisma/client";
+import { FAMILY_ROLE_RANK } from "../../common/auth/familyPermission";
 import { NotFoundError } from "../../common/errors/AppError";
 import { prisma } from "../../config/prisma";
 import type { CreatePersonInput, ListPersonsQuery, UpdatePersonInput } from "./persons.validation";
-
-const ROLE_RANK: Record<PermissionRole, number> = {
-  [PermissionRole.VIEWER]: 0,
-  [PermissionRole.EDITOR]: 1,
-  [PermissionRole.OWNER]: 2,
-};
 
 /**
  * A person can belong to multiple family trees (see schema notes). Outside
@@ -33,14 +28,14 @@ async function getEffectiveRole(callerId: string, personId: string): Promise<Per
   }
 
   return permissions.reduce<PermissionRole>(
-    (best, p) => (ROLE_RANK[p.role] > ROLE_RANK[best] ? p.role : best),
+    (best, p) => (FAMILY_ROLE_RANK[p.role] > FAMILY_ROLE_RANK[best] ? p.role : best),
     permissions[0]!.role,
   );
 }
 
 export async function requireEffectiveRole(callerId: string, personId: string, minRole: PermissionRole): Promise<void> {
   const role = await getEffectiveRole(callerId, personId);
-  if (!role || ROLE_RANK[role] < ROLE_RANK[minRole]) {
+  if (!role || FAMILY_ROLE_RANK[role] < FAMILY_ROLE_RANK[minRole]) {
     throw new NotFoundError("Person not found");
   }
 }

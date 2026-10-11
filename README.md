@@ -501,8 +501,25 @@ In today's flows a person is normally only ever in one family (there's no
 "add an existing person to another family" endpoint yet), so this mostly
 matters for future phases.
 
-Everything else (`relationships`, family tree traversal, `photos`, `events`,
-family-level `permissions` CRUD) is still unbuilt.
+| Method & path | Auth | Notes |
+|---|---|---|
+| `POST /api/families/:familyId/relationships` | `EDITOR`+ | Validates both people are members of the family, prevents parent/child cycles, canonicalizes `SPOUSE` pairs |
+| `GET /api/families/:familyId/relationships` | `VIEWER`+ | All edges in the family (no pagination - counts are small by nature) |
+| `PUT /api/relationships/:relationshipId` | resolved from the relationship's family | Only `validFrom`/`validTo`/`notes` are editable - redefining who/what a relationship connects means delete + recreate, not a PUT |
+| `DELETE /api/relationships/:relationshipId` | resolved from the relationship's family | |
+| `GET /api/families/:familyId/tree` | `VIEWER`+ | Every member person (nodes) + every relationship edge in **one** call - not one request per person |
+| `GET /api/families/:familyId/ancestors/:personId` | `VIEWER`+ | Recursive `WITH RECURSIVE` CTE over `PARENT` edges; each result includes `depth` (1 = parent, 2 = grandparent, ...) |
+| `GET /api/families/:familyId/descendants/:personId` | `VIEWER`+ | Same, walking the other direction |
+
+**Relationship business rules** (`relationships.service.ts` + `common/db/ancestry.ts`):
+- Both people must already be members of the family before they can be related (`400` otherwise).
+- `SPOUSE` is symmetric: always stored with `personId < relatedPersonId` (UUIDs compared lexically), computed server-side regardless of the order submitted - so "A married to B" can never be stored as two separate rows. The existing DB CHECK constraint from Phase 1 is the backstop if this logic is ever bypassed.
+- Creating a `PARENT` edge is rejected (`400`) if it would make someone their own ancestor - checked via the same recursive ancestor query the `/ancestors` endpoint uses, run inside the same transaction as the insert.
+- Duplicate edges are rejected by the DB's unique constraint, surfaced as `409`.
+- Siblings are **not** a stored relationship or a dedicated endpoint - derive them client-side from `/tree`'s edges (two people who share a `PARENT` edge from the same person are siblings), matching the schema's "don't store redundant sibling links" design from Phase 1.
+
+Everything else (`photos`, `events`, family-level `permissions` CRUD) is
+still unbuilt.
 
 **Known limitation**: logout is stateless - it clears the refresh cookie but
 can't revoke an already-issued access token server-side (no token/session
@@ -521,8 +538,11 @@ This runs `pretest` first (creates a separate `family_tree_test` database on
 the same Postgres server if it doesn't exist, then applies all committed
 migrations to it - so tests never touch dev/seed data), then runs
 `vitest run`. Current coverage: registration/login/refresh/401 handling
-(`tests/auth.test.ts`) and the full `UserRole` permission matrix - who can
-create and view what (`tests/users.test.ts`).
+(`tests/auth.test.ts`), the full `UserRole` permission matrix (`tests/users.test.ts`),
+and relationship business rules - cycle prevention, `SPOUSE` canonicalization,
+cross-family membership validation, and the `/tree` graph endpoint
+(`tests/relationships.test.ts`). `families`/`persons` themselves are still a
+gap - manually verified end-to-end, no automated suite yet.
 
 Frontend: `npm test` (vitest, Angular CLI default) - component/service tests
 land in Phase 3.
@@ -575,11 +595,11 @@ export/deletion policy).
 - [~] **Phase 2 - Backend** (in progress): Express app ✅, auth
       (register/login/refresh/logout) ✅, system `UserRole` administration
       (`users` module, enforced server-side, tested) ✅, `families` + `persons`
-      CRUD with family-level `PermissionRole` enforcement ✅ (manually verified
-      end-to-end; automated test coverage for these two modules is still a
-      gap - only `auth`/`users` have vitest suites so far). Still missing:
-      relationships (incl. recursive ancestor/descendant queries), photos,
-      events, family-level `permissions` CRUD endpoints.
+      CRUD with family-level `PermissionRole` enforcement ✅ (manually verified,
+      no automated suite yet), `relationships` + family tree traversal
+      (recursive ancestor/descendant CTEs, cycle prevention, `SPOUSE`
+      canonicalization, tested) ✅. Still missing: photos, events,
+      family-level `permissions` CRUD endpoints.
 - [~] **Phase 3 - Frontend** (started): Angular Material added, login screen
       ✅, dashboard as a `mat-tree` of real family/person data ✅, auth
       plumbing (interceptor + silent refresh + route guard) ✅. Still
