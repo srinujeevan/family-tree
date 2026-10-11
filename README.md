@@ -65,7 +65,8 @@ Connection info now lives in two places:
 
 | Layer | Choice | Version |
 |---|---|---|
-| Frontend framework | Angular | 22.2.x |
+| Frontend framework | Angular (standalone components) | 22.2.x |
+| Frontend UI | Angular Material + CDK | 22.2.2 |
 | Frontend language | TypeScript | ~6.0.3 |
 | Frontend test runner | Vitest | ^5.0.0 (Angular CLI default) |
 | Backend runtime | Node.js | >=24.0.0 (developed on 24.21.0) |
@@ -434,8 +435,7 @@ cd backend
 npm install
 npm run dev     # http://localhost:3000 - fails fast if it can't reach Postgres
 
-# Frontend (separate terminal) - still the default Angular scaffold, not
-# wired up to the backend yet (Phase 3)
+# Frontend (separate terminal)
 cd frontend
 npm install
 npm start       # http://localhost:4200
@@ -445,6 +445,30 @@ Confirm the backend is up and talking to the database:
 ```bash
 curl http://localhost:3000/api/health/db
 ```
+
+### Frontend: what's built so far
+
+- **Login** (`/login`): email + password only - no role selector. The
+  account's role isn't something you pick at login; it's intrinsic to the
+  account and comes back from the backend.
+- **Dashboard** (`/dashboard`, behind `authGuard`): a `mat-tree` showing
+  each family you have access to as a top-level branch (name + member
+  count), expandable to its member persons as leaves (name + birth year).
+  Built from real `GET /api/families` + `GET /api/families/:id/persons`
+  calls - not mock data. Includes a "New family" dialog
+  (`POST /api/families`), loading/error/empty states, and a logout button.
+- **Auth plumbing** (`core/auth/`): the access token lives in memory only
+  (never `localStorage`); the refresh token is the backend's httpOnly
+  cookie. An `HttpInterceptorFn` attaches the access token to every request
+  and retries once via `/api/auth/refresh` on a 401. A
+  `provideAppInitializer` silently re-authenticates from the refresh cookie
+  before the app's first render, so a page reload doesn't bounce an
+  authenticated user back to `/login`.
+- Not built yet: member directory, person profile, relationship editor, the
+  actual interactive family-tree visualization (Phase 4 - this dashboard
+  tree is a data-hierarchy view of family→persons, not a genealogical
+  parent/child/spouse graph, since the `relationships` endpoints don't
+  exist yet), photos, events, permissions UI, settings.
 
 ### API available so far
 
@@ -556,8 +580,12 @@ export/deletion policy).
       gap - only `auth`/`users` have vitest suites so far). Still missing:
       relationships (incl. recursive ancestor/descendant queries), photos,
       events, family-level `permissions` CRUD endpoints.
-- [ ] **Phase 3 - Frontend**: Angular auth screens, dashboard, family
-      management, member directory/profiles, forms, API services.
+- [~] **Phase 3 - Frontend** (started): Angular Material added, login screen
+      ✅, dashboard as a `mat-tree` of real family/person data ✅, auth
+      plumbing (interceptor + silent refresh + route guard) ✅. Still
+      missing: family management (edit/delete), member directory,
+      person profiles/forms, relationship editor, API services for
+      persons CRUD beyond listing.
 - [ ] **Phase 4 - Family tree**: visualization, search/zoom/pan, relationship
       editing UI, complex-structure testing.
 - [ ] **Phase 5 - Additional features**: photo upload/gallery (storage

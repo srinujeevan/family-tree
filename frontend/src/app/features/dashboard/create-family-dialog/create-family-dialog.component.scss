@@ -1,0 +1,16 @@
+.dialog-content {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 320px;
+}
+
+.full-width {
+  width: 100%;
+}
+
+.error-banner {
+  color: var(--mat-sys-error, #b3261e);
+  font-size: 0.875rem;
+  margin: 0;
+}
