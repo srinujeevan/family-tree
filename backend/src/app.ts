@@ -8,6 +8,8 @@ import { logger } from "./config/logger";
 import { prisma } from "./config/prisma";
 import { errorHandler, notFoundHandler } from "./middleware/errorHandler";
 import { apiRateLimiter } from "./middleware/rateLimit";
+import { authRouter } from "./modules/auth/auth.routes";
+import { usersRouter } from "./modules/users/users.routes";
 
 export function createApp(): Express {
   const app = express();
@@ -37,8 +39,11 @@ export function createApp(): Express {
     res.json({ status: "ok", database: "connected", latencyMs: Date.now() - start });
   });
 
-  // Feature routes (auth, families, persons, relationships, photos, events,
-  // permissions, users) are mounted here in later phases.
+  app.use("/api/auth", authRouter);
+  app.use("/api/users", usersRouter);
+
+  // Remaining feature routes (families, persons, relationships, photos,
+  // events, permissions) are mounted here in later phases.
 
   app.use(notFoundHandler);
   app.use(errorHandler);

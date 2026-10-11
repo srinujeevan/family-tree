@@ -428,32 +428,87 @@ npm run prisma:migrate:reset
 
 ## 11. Running the apps
 
-Not available until Phase 2 (backend) and Phase 3 (frontend). This section
-will be filled in as those phases land; for now:
-
 ```bash
-# Frontend only (static scaffold, no backend wired up yet)
+# Backend
+cd backend
+npm install
+npm run dev     # http://localhost:3000 - fails fast if it can't reach Postgres
+
+# Frontend (separate terminal) - still the default Angular scaffold, not
+# wired up to the backend yet (Phase 3)
 cd frontend
 npm install
-npm start   # http://localhost:4200
+npm start       # http://localhost:4200
 ```
+
+Confirm the backend is up and talking to the database:
+```bash
+curl http://localhost:3000/api/health/db
+```
+
+### API available so far
+
+| Method & path | Auth | Notes |
+|---|---|---|
+| `POST /api/auth/register` | public | Always creates a `USER`-role account |
+| `POST /api/auth/login` | public | Returns an access token + sets an httpOnly refresh cookie |
+| `POST /api/auth/refresh` | refresh cookie | Issues a new access token |
+| `POST /api/auth/logout` | - | Clears the refresh cookie (see note on stateless JWTs below) |
+| `GET /api/users/me` | any authenticated role | Caller's own profile |
+| `GET /api/users` | any authenticated role | Scoped per the `UserRole` matrix; supports `page`, `pageSize`, `search` |
+| `GET /api/users/:id` | any authenticated role | 404 if the target is outside the caller's visibility scope |
+| `POST /api/users` | `ADMIN`, `SUPER_ADMIN` | Creates an `ADMIN` or `USER` account (never `SUPER_ADMIN` - rejected by validation) |
+
+Everything else (`families`, `persons`, `relationships`, `photos`, `events`,
+family-level `permissions`) is still unbuilt.
+
+**Known limitation**: logout is stateless - it clears the refresh cookie but
+can't revoke an already-issued access token server-side (no token/session
+store exists). The short access-token TTL (`JWT_ACCESS_EXPIRES_IN`, default
+15m) bounds the exposure window. A revocation list would be a reasonable
+addition to the optional future tables if this becomes a real requirement.
 
 ## 12. Testing
 
-Backend: `npm test` (vitest + supertest) - test suite lands in Phase 2
-alongside the Express app.
+```bash
+cd backend
+npm test
+```
+
+This runs `pretest` first (creates a separate `family_tree_test` database on
+the same Postgres server if it doesn't exist, then applies all committed
+migrations to it - so tests never touch dev/seed data), then runs
+`vitest run`. Current coverage: registration/login/refresh/401 handling
+(`tests/auth.test.ts`) and the full `UserRole` permission matrix - who can
+create and view what (`tests/users.test.ts`).
+
 Frontend: `npm test` (vitest, Angular CLI default) - component/service tests
 land in Phase 3.
 
 ## 13. Security considerations (so far)
 
-- Passwords are never stored in plaintext; `passwordHash` is bcrypt-hashed
-  (cost factor 12 in the seed script).
-- Secrets live in `.env` (gitignored); `.env.example` documents the shape
-  without real values.
-- Every family-scoped record is reachable only through
-  `FamilyUserPermission` checks enforced server-side (Phase 2) - UUIDs alone
-  are not treated as a capability token.
+- Passwords are bcrypt-hashed (cost factor 12) in both the seed script and
+  the real `register`/`users.create` code paths; plaintext is never stored
+  or logged (pino redacts `authorization`, `cookie`, and any `password`/
+  `passwordHash` fields).
+- Auth is JWT access (short-lived, returned in the response body) +
+  JWT refresh (httpOnly, `sameSite: lax` cookie, scoped to `/api/auth`).
+- Every protected route re-checks the caller's role server-side
+  (`authenticate` + `requireRole` middleware) - never relying on a frontend
+  route guard as the real boundary. The `UserRole` matrix (who can create/
+  view which accounts) is enforced in `users.service.ts`, not just hidden in
+  a UI, and is covered by `tests/users.test.ts`.
+- No API path can ever create a `SUPER_ADMIN` account (enforced at both the
+  Zod validation layer and the service layer) - closing off the top
+  privilege level as an attack surface entirely.
+- Secrets live in `.env`/`.env.test` (`.env` is gitignored; `.env.test` has
+  no real secrets and is committed so tests run without setup).
+- Helmet, CORS (restricted to `CORS_ORIGIN`), and rate limiting (general +
+  a tighter limit on `/api/auth/register` and `/api/auth/login`) are active
+  on every request.
+- Family-scoped records (once Phase 2's remaining modules land) will be
+  reachable only through `FamilyUserPermission` checks - UUIDs alone are
+  never treated as a capability token.
 - File uploads will be validated by content (via `sharp`), not by trusting
   the client-supplied extension (Phase 5).
 
@@ -475,9 +530,12 @@ export/deletion policy).
 - [x] **Phase 1 - Architecture and database**: project structure, ER diagram,
       Prisma schema, Docker Compose, initial + constraints migrations, seed
       data, DBeaver instructions. *(this document)*
-- [ ] **Phase 2 - Backend**: Express app, auth, family/person CRUD,
-      memberships, relationships (incl. recursive ancestor/descendant
-      queries), validation, permissions, error handling, automated tests.
+- [~] **Phase 2 - Backend** (in progress): Express app ✅, auth
+      (register/login/refresh/logout) ✅, system `UserRole` administration
+      (`users` module, enforced server-side, tested) ✅. Still missing:
+      family/person CRUD, memberships, relationships (incl. recursive
+      ancestor/descendant queries), photos, events, family-level
+      `permissions` module, broader test coverage.
 - [ ] **Phase 3 - Frontend**: Angular auth screens, dashboard, family
       management, member directory/profiles, forms, API services.
 - [ ] **Phase 4 - Family tree**: visualization, search/zoom/pan, relationship
