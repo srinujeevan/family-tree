@@ -9,4 +9,5 @@ export interface Family {
   createdAt: string;
   updatedAt: string;
   memberCount: number;
+  callerRole: PermissionRole | null;
 }

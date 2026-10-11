@@ -8,6 +8,13 @@ function withMemberCount<T extends { _count: { memberships: number } }>(family: 
   return { ...rest, memberCount: _count.memberships };
 }
 
+function withMemberCountAndCallerRole<T extends { _count: { memberships: number }; permissions: { role: PermissionRole }[] }>(
+  family: T,
+) {
+  const { _count, permissions, ...rest } = family;
+  return { ...rest, memberCount: _count.memberships, callerRole: permissions[0]?.role ?? null };
+}
+
 export async function createFamily(caller: { id: string }, input: CreateFamilyInput) {
   const family = await prisma.$transaction(async (tx) => {
     const created = await tx.family.create({
@@ -20,7 +27,7 @@ export async function createFamily(caller: { id: string }, input: CreateFamilyIn
     return created;
   });
 
-  return { ...family, memberCount: 0 };
+  return { ...family, memberCount: 0, callerRole: PermissionRole.OWNER };
 }
 
 export async function listFamilies(caller: { id: string }, query: ListFamiliesQuery) {
@@ -38,12 +45,15 @@ export async function listFamilies(caller: { id: string }, query: ListFamiliesQu
       orderBy: { createdAt: "desc" },
       skip: (query.page - 1) * query.pageSize,
       take: query.pageSize,
-      include: { _count: { select: { memberships: true } } },
+      include: {
+        _count: { select: { memberships: true } },
+        permissions: { where: { userId: caller.id }, select: { role: true } },
+      },
     }),
   ]);
 
   return {
-    data: families.map(withMemberCount),
+    data: families.map(withMemberCountAndCallerRole),
     pagination: {
       page: query.page,
       pageSize: query.pageSize,

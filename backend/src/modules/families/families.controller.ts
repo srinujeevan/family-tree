@@ -15,12 +15,12 @@ export async function listFamilies(req: Request, res: Response): Promise<void> {
 
 export async function getFamily(req: Request, res: Response): Promise<void> {
   const family = await familiesService.getFamilyById(req.params.familyId as string);
-  res.json({ family });
+  res.json({ family: { ...family, callerRole: req.familyRole } });
 }
 
 export async function updateFamily(req: Request<{ familyId: string }, unknown, UpdateFamilyInput>, res: Response): Promise<void> {
   const family = await familiesService.updateFamily(req.params.familyId, req.body);
-  res.json({ family });
+  res.json({ family: { ...family, callerRole: req.familyRole } });
 }
 
 export async function deleteFamily(req: Request, res: Response): Promise<void> {

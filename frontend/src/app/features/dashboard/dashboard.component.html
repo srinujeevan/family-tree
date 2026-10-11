@@ -57,6 +57,17 @@
           @if (node.detail) {
             <span class="node-detail">{{ node.detail }}</span>
           }
+          @if (canEditFamily(node)) {
+            <span class="row-spacer"></span>
+            <button
+              mat-icon-button
+              (click)="openAddPersonDialog(node, $event)"
+              [attr.aria-label]="'Add a family member to ' + node.name"
+              title="Add family member"
+            >
+              <mat-icon>person_add</mat-icon>
+            </button>
+          }
         </div>
         <div [class.tree-invisible]="!treeControl.isExpanded(node)" role="group">
           <ng-container matTreeNodeOutlet></ng-container>

@@ -457,6 +457,22 @@ curl http://localhost:3000/api/health/db
   Built from real `GET /api/families` + `GET /api/families/:id/persons`
   calls - not mock data. Includes a "New family" dialog
   (`POST /api/families`), loading/error/empty states, and a logout button.
+- **Add family member dialog**: shown as a `person_add` icon next to a
+  family branch, but only when that family's `GET /api/families` response
+  says your `callerRole` is `OWNER` or `EDITOR` (the backend added
+  `callerRole` to the family payload specifically so the frontend can make
+  this call without a separate lookup). Collects the full `Person` shape -
+  first/middle/last name, surname, gender, date of birth (+ "approximate"
+  flag), date of death, place of birth, current city, occupation,
+  description - plus an optional "relate to an existing family member"
+  section (parent of / child of / spouse of / guardian of / ward of an
+  existing person), which maps to the correct `personId`/`relatedPersonId`
+  direction and fires `POST .../relationships` right after the person is
+  created. Verified end-to-end: adding "Test Reddy" as "Child of Suresh
+  Reddy" correctly showed up as a depth-1 ancestor via
+  `GET .../ancestors/:id`, with Ramesh and Lakshmi correctly inherited as
+  depth-2 ancestors. Photo upload is intentionally **not** included yet -
+  no storage/upload endpoint exists on the backend (Phase 5).
 - **Auth plumbing** (`core/auth/`): the access token lives in memory only
   (never `localStorage`); the refresh token is the backend's httpOnly
   cookie. An `HttpInterceptorFn` attaches the access token to every request
@@ -464,11 +480,14 @@ curl http://localhost:3000/api/health/db
   `provideAppInitializer` silently re-authenticates from the refresh cookie
   before the app's first render, so a page reload doesn't bounce an
   authenticated user back to `/login`.
-- Not built yet: member directory, person profile, relationship editor, the
-  actual interactive family-tree visualization (Phase 4 - this dashboard
-  tree is a data-hierarchy view of family→persons, not a genealogical
-  parent/child/spouse graph, since the `relationships` endpoints don't
-  exist yet), photos, events, permissions UI, settings.
+- Not built yet: member directory, person profile/edit screen, a dedicated
+  relationship editor (today relations can only be set while adding a new
+  person, not between two existing ones), the actual interactive
+  genealogical tree visualization (Phase 4 - today's dashboard tree is
+  family→persons membership with an add-person action, not a rendered
+  parent/child/spouse graph), photos, events, permissions UI, settings, and
+  a "Manage Users" screen for the `UserRole` admin endpoints (`POST`/`GET
+  /api/users`) - those still only exist at the API level.
 
 ### API available so far
 
@@ -483,7 +502,7 @@ curl http://localhost:3000/api/health/db
 | `GET /api/users/:id` | any authenticated role | 404 if the target is outside the caller's visibility scope |
 | `POST /api/users` | `ADMIN`, `SUPER_ADMIN` | Creates an `ADMIN` or `USER` account (never `SUPER_ADMIN` - rejected by validation) |
 | `POST /api/families` | any authenticated role | Caller becomes `OWNER` of the new family |
-| `GET /api/families` | any authenticated role | Only families the caller has a `FamilyUserPermission` row for - `UserRole` grants no implicit access |
+| `GET /api/families` | any authenticated role | Only families the caller has a `FamilyUserPermission` row for - `UserRole` grants no implicit access. Each family includes `callerRole` so the frontend knows whether to show edit actions without a second lookup |
 | `GET /api/families/:familyId` | `VIEWER`+ on that family | 404 (not 403) if the caller has no permission row - avoids confirming the family exists |
 | `PUT /api/families/:familyId` | `EDITOR`+ | `rootPersonId` must already be a member of the family |
 | `DELETE /api/families/:familyId` | `OWNER` only | Cascades memberships/relationships/permissions; does not delete the Person records themselves |

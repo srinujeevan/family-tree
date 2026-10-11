@@ -12,6 +12,8 @@ import { catchError, map } from 'rxjs/operators';
 import { AuthService } from '../../core/auth/auth.service';
 import { FamiliesApiService } from '../../core/services/families-api.service';
 import { PersonsApiService } from '../../core/services/persons-api.service';
+import { PermissionRole } from '../../shared/models/family.model';
+import { AddPersonDialogComponent } from './add-person-dialog/add-person-dialog.component';
 import { CreateFamilyDialogComponent } from './create-family-dialog/create-family-dialog.component';
 
 interface TreeNode {
@@ -20,6 +22,8 @@ interface TreeNode {
   detail?: string;
   type: 'family' | 'person';
   children?: TreeNode[];
+  /** Only set on family nodes - the caller's own role on that family. */
+  callerRole?: PermissionRole | null;
 }
 
 @Component({
@@ -56,6 +60,7 @@ export class DashboardComponent {
 
   hasChild = (_: number, node: TreeNode): boolean => !!node.children && node.children.length > 0;
   isFamilyNode = (_: number, node: TreeNode): boolean => node.type === 'family';
+  canEditFamily = (node: TreeNode): boolean => node.callerRole === 'OWNER' || node.callerRole === 'EDITOR';
 
   loadTree(): void {
     this.loading.set(true);
@@ -77,6 +82,7 @@ export class DashboardComponent {
                 name: family.familyName,
                 detail: `${family.memberCount} member${family.memberCount === 1 ? '' : 's'}`,
                 type: 'family',
+                callerRole: family.callerRole,
                 children: personsPage.data.map(
                   (person): TreeNode => ({
                     id: person.id,
@@ -93,6 +99,7 @@ export class DashboardComponent {
                 name: family.familyName,
                 detail: `${family.memberCount} member${family.memberCount === 1 ? '' : 's'}`,
                 type: 'family',
+                callerRole: family.callerRole,
                 children: [],
               }),
             ),
@@ -121,6 +128,22 @@ export class DashboardComponent {
 
   openCreateFamilyDialog(): void {
     const ref = this.dialog.open(CreateFamilyDialogComponent, { width: '420px' });
+    ref.afterClosed().subscribe((created) => {
+      if (created) {
+        this.loadTree();
+      }
+    });
+  }
+
+  openAddPersonDialog(familyNode: TreeNode, event: Event): void {
+    event.stopPropagation(); // don't toggle the tree node's expand/collapse
+    const ref = this.dialog.open(AddPersonDialogComponent, {
+      width: '480px',
+      data: {
+        familyId: familyNode.id,
+        existingPersons: (familyNode.children ?? []).map((child) => ({ id: child.id, name: child.name })),
+      },
+    });
     ref.afterClosed().subscribe((created) => {
       if (created) {
         this.loadTree();
