@@ -458,9 +458,27 @@ curl http://localhost:3000/api/health/db
 | `GET /api/users` | any authenticated role | Scoped per the `UserRole` matrix; supports `page`, `pageSize`, `search` |
 | `GET /api/users/:id` | any authenticated role | 404 if the target is outside the caller's visibility scope |
 | `POST /api/users` | `ADMIN`, `SUPER_ADMIN` | Creates an `ADMIN` or `USER` account (never `SUPER_ADMIN` - rejected by validation) |
+| `POST /api/families` | any authenticated role | Caller becomes `OWNER` of the new family |
+| `GET /api/families` | any authenticated role | Only families the caller has a `FamilyUserPermission` row for - `UserRole` grants no implicit access |
+| `GET /api/families/:familyId` | `VIEWER`+ on that family | 404 (not 403) if the caller has no permission row - avoids confirming the family exists |
+| `PUT /api/families/:familyId` | `EDITOR`+ | `rootPersonId` must already be a member of the family |
+| `DELETE /api/families/:familyId` | `OWNER` only | Cascades memberships/relationships/permissions; does not delete the Person records themselves |
+| `POST /api/families/:familyId/persons` | `EDITOR`+ on that family | Creates the person and adds them to this family in one transaction |
+| `GET /api/families/:familyId/persons` | `VIEWER`+ on that family | Supports `page`, `pageSize`, `search`, `gender`, `isLiving`, `birthYearFrom`/`birthYearTo`, `sortBy`/`sortOrder` |
+| `GET /api/persons/:id` | resolved per-person (see below) | Not family-scoped in the URL - a person can belong to multiple families |
+| `PUT /api/persons/:id` | resolved per-person | |
+| `DELETE /api/persons/:id` | resolved per-person | Permanently deletes the person from **every** family they belong to - no family-scoped "remove membership" endpoint yet |
 
-Everything else (`families`, `persons`, `relationships`, `photos`, `events`,
-family-level `permissions`) is still unbuilt.
+**Person permission resolution**: since a person can belong to more than one
+family tree, `GET/PUT/DELETE /api/persons/:id` aren't scoped by familyId in
+the URL. The caller's effective permission is the *highest* `PermissionRole`
+they hold across any family that person is a member of; zero overlap => 404.
+In today's flows a person is normally only ever in one family (there's no
+"add an existing person to another family" endpoint yet), so this mostly
+matters for future phases.
+
+Everything else (`relationships`, family tree traversal, `photos`, `events`,
+family-level `permissions` CRUD) is still unbuilt.
 
 **Known limitation**: logout is stateless - it clears the refresh cookie but
 can't revoke an already-issued access token server-side (no token/session
@@ -532,10 +550,12 @@ export/deletion policy).
       data, DBeaver instructions. *(this document)*
 - [~] **Phase 2 - Backend** (in progress): Express app ✅, auth
       (register/login/refresh/logout) ✅, system `UserRole` administration
-      (`users` module, enforced server-side, tested) ✅. Still missing:
-      family/person CRUD, memberships, relationships (incl. recursive
-      ancestor/descendant queries), photos, events, family-level
-      `permissions` module, broader test coverage.
+      (`users` module, enforced server-side, tested) ✅, `families` + `persons`
+      CRUD with family-level `PermissionRole` enforcement ✅ (manually verified
+      end-to-end; automated test coverage for these two modules is still a
+      gap - only `auth`/`users` have vitest suites so far). Still missing:
+      relationships (incl. recursive ancestor/descendant queries), photos,
+      events, family-level `permissions` CRUD endpoints.
 - [ ] **Phase 3 - Frontend**: Angular auth screens, dashboard, family
       management, member directory/profiles, forms, API services.
 - [ ] **Phase 4 - Family tree**: visualization, search/zoom/pan, relationship

@@ -1,4 +1,4 @@
-import type { UserRole } from "@prisma/client";
+import type { PermissionRole, UserRole } from "@prisma/client";
 
 declare global {
   namespace Express {
@@ -8,6 +8,8 @@ declare global {
         email: string;
         role: UserRole;
       };
+      /** Set by requireFamilyRole once it has resolved the caller's role on req.params.familyId. */
+      familyRole?: PermissionRole;
     }
   }
 }
