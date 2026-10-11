@@ -1,19 +1,31 @@
-import { PermissionRole, RelationshipType } from "@prisma/client";
+import { RelationshipType } from "@prisma/client";
+import type { Prisma } from "@prisma/client";
 import { getAncestors, getDescendants, wouldCreateParentCycle } from "../../common/db/ancestry";
-import { assertFamilyRole } from "../../common/auth/familyPermission";
 import { BadRequestError, NotFoundError } from "../../common/errors/AppError";
 import { prisma } from "../../config/prisma";
 import type { CreateRelationshipInput, UpdateRelationshipInput } from "./relationships.validation";
 
-async function assertBothAreMembers(familyId: string, personId: string, relatedPersonId: string): Promise<void> {
-  const memberships = await prisma.familyMembership.findMany({
-    where: { familyId, personId: { in: [personId, relatedPersonId] } },
-    select: { personId: true },
+/**
+ * Open collaboration model: anyone can relate anyone to anyone, regardless
+ * of which family(ies) they already belong to (see README). Relating two
+ * people under familyId's context makes both of them members of that
+ * family if they weren't already, rather than rejecting the relationship -
+ * so the family's tree view stays a complete, connected picture instead of
+ * silently missing edges to people recorded elsewhere.
+ */
+async function ensureBothAreMembers(
+  tx: Prisma.TransactionClient,
+  familyId: string,
+  personId: string,
+  relatedPersonId: string,
+): Promise<void> {
+  await tx.familyMembership.createMany({
+    data: [
+      { familyId, personId },
+      { familyId, personId: relatedPersonId },
+    ],
+    skipDuplicates: true,
   });
-  const memberIds = new Set(memberships.map((m) => m.personId));
-  if (!memberIds.has(personId) || !memberIds.has(relatedPersonId)) {
-    throw new BadRequestError("Both people must be members of this family before they can be related");
-  }
 }
 
 /** SPOUSE is symmetric - always store with personId < relatedPersonId (also enforced by a DB CHECK constraint). */
@@ -30,7 +42,7 @@ function canonicalizeIfSpouse(
 
 export async function createRelationship(familyId: string, input: CreateRelationshipInput) {
   return prisma.$transaction(async (tx) => {
-    await assertBothAreMembers(familyId, input.personId, input.relatedPersonId);
+    await ensureBothAreMembers(tx, familyId, input.personId, input.relatedPersonId);
 
     const [personId, relatedPersonId] = canonicalizeIfSpouse(
       input.relationshipType,
@@ -74,9 +86,8 @@ async function getRelationshipOrThrow(relationshipId: string) {
   return relationship;
 }
 
-export async function updateRelationship(caller: { id: string }, relationshipId: string, input: UpdateRelationshipInput) {
-  const relationship = await getRelationshipOrThrow(relationshipId);
-  await assertFamilyRole(caller.id, relationship.familyId, PermissionRole.EDITOR);
+export async function updateRelationship(relationshipId: string, input: UpdateRelationshipInput) {
+  await getRelationshipOrThrow(relationshipId);
 
   return prisma.personRelationship.update({
     where: { id: relationshipId },
@@ -84,9 +95,8 @@ export async function updateRelationship(caller: { id: string }, relationshipId:
   });
 }
 
-export async function deleteRelationship(caller: { id: string }, relationshipId: string): Promise<void> {
-  const relationship = await getRelationshipOrThrow(relationshipId);
-  await assertFamilyRole(caller.id, relationship.familyId, PermissionRole.EDITOR);
+export async function deleteRelationship(relationshipId: string): Promise<void> {
+  await getRelationshipOrThrow(relationshipId);
 
   await prisma.personRelationship.delete({ where: { id: relationshipId } });
 }

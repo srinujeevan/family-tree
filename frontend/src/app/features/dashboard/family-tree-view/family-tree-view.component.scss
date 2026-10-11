@@ -1,0 +1,97 @@
+:host {
+  display: block;
+}
+
+.tree-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 8px 0;
+}
+
+.spacer {
+  flex: 1 1 auto;
+}
+
+.tree-canvas {
+  border-radius: 12px;
+  overflow: hidden;
+  min-height: 300px;
+}
+
+.svg-scroll {
+  overflow: auto;
+  max-height: 70vh;
+}
+
+svg {
+  display: block;
+}
+
+.state-row {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 48px 16px;
+  min-height: 300px;
+  text-align: center;
+  background: #2f7ea8;
+  color: #fff;
+}
+
+.empty-icon {
+  font-size: 48px;
+  width: 48px;
+  height: 48px;
+  opacity: 0.7;
+}
+
+.error-state {
+  background: var(--mat-sys-error-container, #f8d7da);
+  color: var(--mat-sys-on-error-container, #58151c);
+}
+
+.link {
+  stroke: rgba(255, 255, 255, 0.85);
+  stroke-width: 3;
+}
+
+.link-guardian {
+  stroke-dasharray: 6 5;
+  stroke: rgba(255, 255, 255, 0.6);
+}
+
+.link-spouse {
+  stroke: rgba(255, 220, 120, 0.9);
+  stroke-width: 3;
+}
+
+.person-node {
+  cursor: pointer;
+}
+
+.person-node:hover circle {
+  filter: brightness(1.12);
+}
+
+.node-initials {
+  fill: #fff;
+  font-weight: 600;
+  font-size: 18px;
+  pointer-events: none;
+}
+
+.node-name {
+  fill: #fff;
+  font-size: 13px;
+  font-weight: 500;
+  pointer-events: none;
+}
+
+.node-detail {
+  fill: rgba(255, 255, 255, 0.8);
+  font-size: 11px;
+  pointer-events: none;
+}

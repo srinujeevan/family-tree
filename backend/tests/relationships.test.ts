@@ -118,7 +118,7 @@ describe("relationships", () => {
     expect(duplicateRes.status).toBe(409);
   });
 
-  it("rejects relating two people when one isn't a member of the family", async () => {
+  it("relates two people across families, auto-adding the outsider as a member instead of rejecting", async () => {
     const { token, familyId, addPerson } = await createOwnerContext();
     const member = await addPerson("Member");
     const other = await createOwnerContext();
@@ -128,7 +128,12 @@ describe("relationships", () => {
       .post(`/api/families/${familyId}/relationships`)
       .set("Authorization", `Bearer ${token}`)
       .send({ personId: member, relatedPersonId: outsider, relationshipType: RelationshipType.GUARDIAN });
-    expect(res.status).toBe(400);
+    expect(res.status).toBe(201);
+
+    const membership = await prisma.familyMembership.findUnique({
+      where: { familyId_personId: { familyId, personId: outsider } },
+    });
+    expect(membership).not.toBeNull();
   });
 
   it("GET /tree returns all member nodes and relationship edges in one call", async () => {
@@ -167,5 +172,59 @@ describe("relationships", () => {
       .delete(`/api/relationships/${relationshipId}`)
       .set("Authorization", `Bearer ${token}`);
     expect(deleteRes.status).toBe(204);
+  });
+
+  it("open collaboration model: a user with no FamilyUserPermission can still add/edit people and relate across families", async () => {
+    const owner = await createOwnerContext();
+    const existingPerson = await owner.addPerson("Existing");
+
+    // A second, completely unrelated account - never granted access to owner's family.
+    const strangerEmail = `rel-stranger-${randomUUID()}@example.com`;
+    const stranger = await prisma.userAccount.create({
+      data: { fullName: "Stranger", email: strangerEmail, passwordHash: await hashPassword("Sup3rSecret!"), role: UserRole.USER },
+    });
+    userIds.push(stranger.id);
+    const strangerToken = signAccessToken({ sub: stranger.id, email: stranger.email, role: stranger.role });
+
+    const permission = await prisma.familyUserPermission.findUnique({
+      where: { familyId_userId: { familyId: owner.familyId, userId: stranger.id } },
+    });
+    expect(permission).toBeNull(); // confirms the stranger truly has no granted access
+
+    const createRes = await request(app)
+      .post(`/api/families/${owner.familyId}/persons`)
+      .set("Authorization", `Bearer ${strangerToken}`)
+      .send({ firstName: "AddedByStranger" });
+    expect(createRes.status).toBe(201);
+    const newPersonId = createRes.body.person.id as string;
+
+    const updateRes = await request(app)
+      .put(`/api/persons/${existingPerson}`)
+      .set("Authorization", `Bearer ${strangerToken}`)
+      .send({ occupation: "Edited by stranger" });
+    expect(updateRes.status).toBe(200);
+    expect(updateRes.body.person.occupation).toBe("Edited by stranger");
+
+    const relateRes = await request(app)
+      .post(`/api/families/${owner.familyId}/relationships`)
+      .set("Authorization", `Bearer ${strangerToken}`)
+      .send({ personId: newPersonId, relatedPersonId: existingPerson, relationshipType: RelationshipType.GUARDIAN });
+    expect(relateRes.status).toBe(201);
+  });
+
+  it("GET /api/persons lists people across different families", async () => {
+    const ownerA = await createOwnerContext();
+    const ownerB = await createOwnerContext();
+    const tag = randomUUID();
+    const personA = await ownerA.addPerson(`Global${tag}`);
+    const personB = await ownerB.addPerson(`Global${tag}`);
+
+    const res = await request(app)
+      .get("/api/persons")
+      .query({ search: `Global${tag}`, pageSize: 50 })
+      .set("Authorization", `Bearer ${ownerA.token}`);
+    expect(res.status).toBe(200);
+    const ids = res.body.data.map((p: { id: string }) => p.id);
+    expect(ids).toEqual(expect.arrayContaining([personA, personB]));
   });
 });

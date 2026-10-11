@@ -6,7 +6,10 @@ import { MatInputModule } from '@angular/material/input';
 import { MatSelectModule } from '@angular/material/select';
 import { MatCheckboxModule } from '@angular/material/checkbox';
 import { MatButtonModule } from '@angular/material/button';
+import { MatListModule } from '@angular/material/list';
 import { HttpErrorResponse } from '@angular/common/http';
+import { debounceTime, distinctUntilChanged, switchMap } from 'rxjs';
+import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { PersonsApiService } from '../../../core/services/persons-api.service';
 import { RelationshipsApiService, CreateRelationshipPayload } from '../../../core/services/relationships-api.service';
 import { Gender, Person } from '../../../shared/models/person.model';
@@ -15,7 +18,6 @@ import { ApiError } from '../../../shared/models/pagination.model';
 
 export interface AddPersonDialogData {
   familyId: string;
-  existingPersons: { id: string; name: string }[];
 }
 
 type RelationOption = 'PARENT_OF' | 'CHILD_OF' | 'SPOUSE_OF' | 'GUARDIAN_OF' | 'WARD_OF';
@@ -36,6 +38,12 @@ const RELATION_OPTIONS: { value: RelationOption; label: string }[] = [
   { value: 'WARD_OF', label: 'Ward of (they are the guardian)' },
 ];
 
+function personLabel(person: Person): string {
+  const name = [person.firstName, person.lastName].filter(Boolean).join(' ');
+  const families = person.families?.map((f) => f.familyName).join(', ');
+  return families ? `${name} (${families})` : name;
+}
+
 @Component({
   selector: 'app-add-person-dialog',
   standalone: true,
@@ -47,6 +55,7 @@ const RELATION_OPTIONS: { value: RelationOption; label: string }[] = [
     MatSelectModule,
     MatCheckboxModule,
     MatButtonModule,
+    MatListModule,
   ],
   templateUrl: './add-person-dialog.component.html',
   styleUrl: './add-person-dialog.component.scss',
@@ -60,7 +69,10 @@ export class AddPersonDialogComponent {
 
   readonly genderOptions = GENDER_OPTIONS;
   readonly relationOptions = RELATION_OPTIONS;
+  readonly personLabel = personLabel;
 
+  readonly searchResults = signal<Person[]>([]);
+  readonly selectedPerson = signal<Person | null>(null);
   readonly saving = signal(false);
   readonly errorMessage = signal<string | null>(null);
 
@@ -78,16 +90,31 @@ export class AddPersonDialogComponent {
     occupation: [''],
     description: [''],
     relateEnabled: [false],
-    relatedPersonId: [''],
+    relationSearch: [''],
     relationOption: ['PARENT_OF' as RelationOption],
   });
+
+  constructor() {
+    this.form.controls.relationSearch.valueChanges
+      .pipe(
+        debounceTime(250),
+        distinctUntilChanged(),
+        switchMap((term) => this.personsApi.listAll(term || undefined)),
+        takeUntilDestroyed(),
+      )
+      .subscribe((page) => this.searchResults.set(page.data));
+  }
+
+  selectRelatedPerson(person: Person): void {
+    this.selectedPerson.set(person);
+  }
 
   submit(): void {
     if (this.form.invalid || this.saving()) {
       this.form.markAllAsTouched();
       return;
     }
-    if (this.form.controls.relateEnabled.value && !this.form.controls.relatedPersonId.value) {
+    if (this.form.controls.relateEnabled.value && !this.selectedPerson()) {
       this.errorMessage.set('Choose a family member to relate to, or turn off "Add a relation".');
       return;
     }
@@ -112,22 +139,20 @@ export class AddPersonDialogComponent {
         description: value.description || undefined,
       })
       .subscribe({
-        next: (res) => this.maybeCreateRelation(res.person, value),
+        next: (res) => this.maybeCreateRelation(res.person, value.relateEnabled, value.relationOption),
         error: (err: unknown) => this.fail(err),
       });
   }
 
-  private maybeCreateRelation(
-    person: Person,
-    value: { relateEnabled: boolean; relatedPersonId: string; relationOption: RelationOption },
-  ): void {
-    if (!value.relateEnabled || !value.relatedPersonId) {
+  private maybeCreateRelation(person: Person, relateEnabled: boolean, relationOption: RelationOption): void {
+    const relatedPerson = this.selectedPerson();
+    if (!relateEnabled || !relatedPerson) {
       this.saving.set(false);
       this.dialogRef.close(person);
       return;
     }
 
-    const payload = this.buildRelationshipPayload(person.id, value.relatedPersonId, value.relationOption);
+    const payload = this.buildRelationshipPayload(person.id, relatedPerson.id, relationOption);
     this.relationshipsApi.create(this.data.familyId, payload).subscribe({
       next: () => {
         this.saving.set(false);
@@ -138,9 +163,7 @@ export class AddPersonDialogComponent {
         // close the dialog with that fact rather than losing the work, but
         // surface the relation error so the user knows to add it manually.
         this.saving.set(false);
-        this.errorMessage.set(
-          `Person created, but the relation could not be added: ${this.extractMessage(err)}`,
-        );
+        this.errorMessage.set(`Person created, but the relation could not be added: ${this.extractMessage(err)}`);
       },
     });
   }

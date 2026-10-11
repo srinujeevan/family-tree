@@ -1,0 +1,82 @@
+<div class="tree-toolbar">
+  <button mat-stroked-button (click)="openAddPerson()">
+    <mat-icon>person_add</mat-icon>
+    Add person
+  </button>
+  <span class="spacer"></span>
+  <button mat-icon-button (click)="zoomOut()" aria-label="Zoom out" title="Zoom out">
+    <mat-icon>remove</mat-icon>
+  </button>
+  <button mat-button (click)="resetZoom()" title="Reset zoom">{{ (zoom() * 100).toFixed(0) }}%</button>
+  <button mat-icon-button (click)="zoomIn()" aria-label="Zoom in" title="Zoom in">
+    <mat-icon>add</mat-icon>
+  </button>
+</div>
+
+<div class="tree-canvas">
+  @if (loading()) {
+    <div class="state-row">
+      <mat-spinner diameter="32" />
+    </div>
+  } @else if (loadError()) {
+    <div class="state-row error-state">
+      <p>{{ loadError() }}</p>
+      <button mat-button (click)="load()">Retry</button>
+    </div>
+  } @else if (layout(); as l) {
+    @if (l.nodes.length === 0) {
+      <div class="state-row empty-state">
+        <mat-icon class="empty-icon">family_restroom</mat-icon>
+        <p>No one in this family tree yet.</p>
+        <button mat-flat-button color="primary" (click)="openAddPerson()">Add the first person</button>
+      </div>
+    } @else {
+      <div class="svg-scroll">
+        <svg [attr.viewBox]="viewBox()" [attr.width]="l.width * zoom()" [attr.height]="l.height * zoom()">
+          <defs>
+            <linearGradient id="treeBg" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stop-color="#1c4d73" />
+              <stop offset="100%" stop-color="#2f7ea8" />
+            </linearGradient>
+          </defs>
+          <rect x="0" y="0" [attr.width]="l.width" [attr.height]="l.height" fill="url(#treeBg)" />
+
+          @for (link of l.links; track $index) {
+            <path
+              [attr.d]="link.path"
+              [class]="'link link-' + link.kind.toLowerCase()"
+              fill="none"
+            />
+          }
+
+          @for (node of l.nodes; track node.person.id) {
+            <g
+              class="person-node"
+              [attr.transform]="'translate(' + node.x + ',' + node.y + ')'"
+              [matMenuTriggerFor]="nodeMenu"
+              [matMenuTriggerData]="{ node: node }"
+            >
+              <circle [attr.r]="nodeRadius" [attr.fill]="node.color" stroke="#fff" stroke-width="3" />
+              <text text-anchor="middle" dy="6" class="node-initials">{{ initials(node.person) }}</text>
+              <text text-anchor="middle" [attr.y]="nodeRadius + 18" class="node-name">{{ displayName(node.person) }}</text>
+              <text text-anchor="middle" [attr.y]="nodeRadius + 34" class="node-detail">{{ lifespan(node.person) }}</text>
+            </g>
+          }
+        </svg>
+      </div>
+    }
+  }
+</div>
+
+<mat-menu #nodeMenu="matMenu">
+  <ng-template matMenuContent let-node="node">
+    <button mat-menu-item (click)="openEditPerson(node)">
+      <mat-icon>edit</mat-icon>
+      <span>Edit details</span>
+    </button>
+    <button mat-menu-item (click)="openAddRelation(node)">
+      <mat-icon>link</mat-icon>
+      <span>Add relation</span>
+    </button>
+  </ng-template>
+</mat-menu>

@@ -1,34 +1,27 @@
 import { Router } from "express";
-import { PermissionRole } from "@prisma/client";
 import { validateBody, validateQuery } from "../../common/validators/validate";
 import { authenticate } from "../../middleware/auth";
-import { requireFamilyRole } from "../../middleware/requireFamilyRole";
 import * as personsController from "./persons.controller";
 import { createPersonSchema, listPersonsQuerySchema, updatePersonSchema } from "./persons.validation";
 
-/** Mounted at /api/families/:familyId/persons (requires mergeParams on the parent router). */
+/**
+ * Mounted at /api/families/:familyId/persons (requires mergeParams on the
+ * parent router). Any authenticated user may add or list people here - see
+ * README "Open collaboration model" for why this isn't role-gated.
+ */
 export const familyPersonsRouter = Router({ mergeParams: true });
 familyPersonsRouter.use(authenticate);
-familyPersonsRouter.post(
-  "/",
-  requireFamilyRole(PermissionRole.EDITOR),
-  validateBody(createPersonSchema),
-  personsController.createPerson,
-);
-familyPersonsRouter.get(
-  "/",
-  requireFamilyRole(PermissionRole.VIEWER),
-  validateQuery(listPersonsQuerySchema),
-  personsController.listPersonsInFamily,
-);
+familyPersonsRouter.post("/", validateBody(createPersonSchema), personsController.createPerson);
+familyPersonsRouter.get("/", validateQuery(listPersonsQuerySchema), personsController.listPersonsInFamily);
 
 /**
- * Mounted at /api/persons. Not family-scoped in the URL because a person can
- * belong to multiple families - permission is resolved in the service layer
- * from the union of the caller's roles across that person's families.
+ * Mounted at /api/persons. Not family-scoped in the URL - a person can
+ * belong to multiple families, and any authenticated user can view/edit/
+ * delete any person (open collaboration model, see README).
  */
 export const personsRouter = Router();
 personsRouter.use(authenticate);
+personsRouter.get("/", validateQuery(listPersonsQuerySchema), personsController.listAllPersons);
 personsRouter.get("/:id", personsController.getPerson);
 personsRouter.put("/:id", validateBody(updatePersonSchema), personsController.updatePerson);
 personsRouter.delete("/:id", personsController.deletePerson);

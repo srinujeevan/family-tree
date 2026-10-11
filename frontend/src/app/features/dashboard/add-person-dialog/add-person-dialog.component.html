@@ -72,31 +72,38 @@
       <textarea matInput formControlName="description" rows="3"></textarea>
     </mat-form-field>
 
-    @if (data.existingPersons.length > 0) {
-      <mat-checkbox formControlName="relateEnabled" class="relate-toggle">
-        Add a relation to an existing family member
-      </mat-checkbox>
+    <mat-checkbox formControlName="relateEnabled" class="relate-toggle">
+      Add a relation to someone (any family)
+    </mat-checkbox>
 
-      @if (form.controls.relateEnabled.value) {
-        <div class="field-row two-col relate-fields">
-          <mat-form-field appearance="outline">
-            <mat-label>Relation</mat-label>
-            <mat-select formControlName="relationOption">
-              @for (option of relationOptions; track option.value) {
-                <mat-option [value]="option.value">{{ option.label }}</mat-option>
-              }
-            </mat-select>
-          </mat-form-field>
-          <mat-form-field appearance="outline">
-            <mat-label>Existing family member</mat-label>
-            <mat-select formControlName="relatedPersonId">
-              @for (person of data.existingPersons; track person.id) {
-                <mat-option [value]="person.id">{{ person.name }}</mat-option>
-              }
-            </mat-select>
-          </mat-form-field>
-        </div>
+    @if (form.controls.relateEnabled.value) {
+      <mat-form-field appearance="outline" class="full-width">
+        <mat-label>Relation</mat-label>
+        <mat-select formControlName="relationOption">
+          @for (option of relationOptions; track option.value) {
+            <mat-option [value]="option.value">New person is {{ option.label.toLowerCase() }}</mat-option>
+          }
+        </mat-select>
+      </mat-form-field>
+
+      <mat-form-field appearance="outline" class="full-width">
+        <mat-label>Search for a person</mat-label>
+        <input matInput formControlName="relationSearch" placeholder="Type a name..." />
+      </mat-form-field>
+
+      @if (selectedPerson(); as selected) {
+        <p class="selected-person">Selected: <strong>{{ personLabel(selected) }}</strong></p>
       }
+
+      <mat-selection-list class="results-list" [multiple]="false">
+        @for (person of searchResults(); track person.id) {
+          <mat-list-option (click)="selectRelatedPerson(person)" [selected]="selectedPerson()?.id === person.id">
+            {{ personLabel(person) }}
+          </mat-list-option>
+        } @empty {
+          <p class="no-results">No people found.</p>
+        }
+      </mat-selection-list>
     }
 
     @if (errorMessage(); as message) {

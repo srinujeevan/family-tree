@@ -32,10 +32,12 @@ built and what's next.
   traversal uses a hand-written, parameterized `WITH RECURSIVE` SQL query
   (via `prisma.$queryRaw` with tagged-template parameters, never string
   concatenation) because Prisma cannot express recursive queries natively.
-- **Auth & authorization**: JWT access/refresh tokens (bcrypt-hashed
-  passwords). Every family-scoped endpoint re-checks the caller's
-  `FamilyUserPermission` role (OWNER/EDITOR/VIEWER) server-side - the Angular
-  route guards are a UX convenience only, never the real security boundary.
+- **Auth**: JWT access/refresh tokens (bcrypt-hashed passwords). The Angular
+  route guard is a UX convenience only, never the real security boundary -
+  every mutating endpoint re-checks on the server.
+- **Authorization is split into two different scopes** - see "Open
+  collaboration model" below for why persons/relationships are open while
+  families stay permission-gated.
 - **File storage**: a small storage abstraction (`StorageProvider` interface)
   with a local-disk implementation for development and an S3-compatible
   implementation for production, selected by `STORAGE_DRIVER`. Only
@@ -48,6 +50,42 @@ built and what's next.
   - no extra table or flag needed. See the schema comments in
   [`backend/prisma/schema.prisma`](backend/prisma/schema.prisma) for the full
   reasoning, including how adoption/step-parent types will be added later.
+
+### Open collaboration model
+
+Two different authorization philosophies are deliberately in effect, by
+explicit user request (moving away from the stricter design Phase 1/2
+started with):
+
+- **Families** stay permission-gated: `GET /api/families` only lists
+  families you have a `FamilyUserPermission` row for, and only an
+  `OWNER`/`EDITOR` can rename/delete one. A family is still "your" private
+  workspace for discovery purposes.
+- **Persons and relationships are open to every authenticated account**,
+  regardless of `UserRole` or `FamilyUserPermission`:
+  - Any logged-in user can add a person to **any** family (not just ones
+    they have a permission row for), and can view/edit/delete **any**
+    person in the system.
+  - Any logged-in user can create a relationship between **any two
+    people**, regardless of which family(ies) either belongs to. Relating
+    two people under a given family's context auto-adds both as members of
+    that family if they weren't already (`ensureBothAreMembers` in
+    `relationships.service.ts`) rather than rejecting the request - so a
+    family's tree view stays a complete, connected picture instead of
+    silently missing an edge to someone recorded elsewhere.
+  - `GET /api/persons` (no family scoping) lists every person in the
+    system, used by the frontend's relation picker so it can suggest anyone,
+    not just people already in the family you're viewing.
+  - Data-integrity rules still apply regardless of who's calling: no parent/
+    child cycles, no duplicate edges, `SPOUSE` pairs are still canonicalized.
+    These aren't authorization - they protect the graph from becoming
+    nonsensical, which matters even more with no permission gate to slow
+    anyone down.
+
+Practical implication: a brand-new self-registered `USER` account can
+immediately edit anyone's family data. That's intentional for this
+application, not an oversight - treat it as a trust assumption worth
+revisiting if this ever needs per-family privacy.
 
 ### Why Prisma 7's connection setup looks different
 
@@ -451,28 +489,45 @@ curl http://localhost:3000/api/health/db
 - **Login** (`/login`): email + password only - no role selector. The
   account's role isn't something you pick at login; it's intrinsic to the
   account and comes back from the backend.
-- **Dashboard** (`/dashboard`, behind `authGuard`): a `mat-tree` showing
-  each family you have access to as a top-level branch (name + member
-  count), expandable to its member persons as leaves (name + birth year).
-  Built from real `GET /api/families` + `GET /api/families/:id/persons`
-  calls - not mock data. Includes a "New family" dialog
-  (`POST /api/families`), loading/error/empty states, and a logout button.
-- **Add family member dialog**: shown as a `person_add` icon next to a
-  family branch, but only when that family's `GET /api/families` response
-  says your `callerRole` is `OWNER` or `EDITOR` (the backend added
-  `callerRole` to the family payload specifically so the frontend can make
-  this call without a separate lookup). Collects the full `Person` shape -
-  first/middle/last name, surname, gender, date of birth (+ "approximate"
-  flag), date of death, place of birth, current city, occupation,
-  description - plus an optional "relate to an existing family member"
-  section (parent of / child of / spouse of / guardian of / ward of an
-  existing person), which maps to the correct `personId`/`relatedPersonId`
-  direction and fires `POST .../relationships` right after the person is
-  created. Verified end-to-end: adding "Test Reddy" as "Child of Suresh
-  Reddy" correctly showed up as a depth-1 ancestor via
-  `GET .../ancestors/:id`, with Ramesh and Lakshmi correctly inherited as
-  depth-2 ancestors. Photo upload is intentionally **not** included yet -
+- **Dashboard** (`/dashboard`, behind `authGuard`): lists the families you
+  have a permission row for as selectable chips (when you have more than
+  one), with a "New family" dialog (`POST /api/families`) and a logout
+  button. Selecting a family renders `<app-family-tree-view>` below it.
+- **Family tree view** (`family-tree-view/`): a genealogical node-link
+  diagram, not a list - replaces an earlier `mat-tree` indented-list version
+  entirely. Built in three parts:
+  - `tree-layout.ts` - a pure, dependency-free layout function (no D3 or
+    other charting library pulled in). Computes each person's generation by
+    walking `PARENT` edges, then a correction pass that raises anyone who
+    married in (no recorded parents) to their spouse's generation instead of
+    defaulting them to generation 0 - this was a real bug caught by eyeballing
+    the live render (spouses were floating at the top regardless of which
+    generation they'd actually married into) and fixed by re-ordering when
+    spouse-equalization runs relative to parent-chain propagation.
+  - The component renders that layout as inline SVG: circular nodes
+    (initials, name, lifespan), colored by generation, connected by cubic-
+    bezier curves for `PARENT`/`GUARDIAN` edges and a straight gold line for
+    `SPOUSE` edges, on a gradient background - styled after a reference
+    image the user provided mid-session (radial node-link diagram, not an
+    indented tree list).
+  - Click a node for a menu: **Edit details** or **Add relation**. A
+    toolbar has **Add person** and +/- zoom controls.
+  - Fetches `GET /api/families/:id/tree` (nodes + edges in one call, per the
+    backend's "no N+1 per person" design) and recomputes the whole layout
+    client-side whenever the tree changes.
+- **Add/Edit person dialogs**: collect the full `Person` shape - first/
+  middle/last name, surname, gender, date of birth (+ "approximate" flag),
+  date of death, place of birth, current city, occupation, description.
+  Edit pre-fills from the clicked node and calls `PUT /api/persons/:id`.
+  Add also has an optional "relate to someone" section (parent of / child
+  of / spouse of / guardian of / ward of), searched from **every family**
+  via `GET /api/persons` (not just the current one) - matching the backend's
+  open collaboration model. Photo upload is intentionally **not** included -
   no storage/upload endpoint exists on the backend (Phase 5).
+- **Add Relation dialog**: the same relation picker as a standalone action
+  (anchored at whichever person's node you clicked), for relating two
+  people who already exist - `POST .../relationships` via
+  `RelationshipsApiService`.
 - **Auth plumbing** (`core/auth/`): the access token lives in memory only
   (never `localStorage`); the refresh token is the backend's httpOnly
   cookie. An `HttpInterceptorFn` attaches the access token to every request
@@ -480,13 +535,9 @@ curl http://localhost:3000/api/health/db
   `provideAppInitializer` silently re-authenticates from the refresh cookie
   before the app's first render, so a page reload doesn't bounce an
   authenticated user back to `/login`.
-- Not built yet: member directory, person profile/edit screen, a dedicated
-  relationship editor (today relations can only be set while adding a new
-  person, not between two existing ones), the actual interactive
-  genealogical tree visualization (Phase 4 - today's dashboard tree is
-  family→persons membership with an add-person action, not a rendered
-  parent/child/spouse graph), photos, events, permissions UI, settings, and
-  a "Manage Users" screen for the `UserRole` admin endpoints (`POST`/`GET
+- Not built yet: a member directory (searchable flat list, as opposed to the
+  tree view), photos, events, permissions UI, settings, and a "Manage
+  Users" screen for the `UserRole` admin endpoints (`POST`/`GET
   /api/users`) - those still only exist at the API level.
 
 ### API available so far
@@ -506,34 +557,27 @@ curl http://localhost:3000/api/health/db
 | `GET /api/families/:familyId` | `VIEWER`+ on that family | 404 (not 403) if the caller has no permission row - avoids confirming the family exists |
 | `PUT /api/families/:familyId` | `EDITOR`+ | `rootPersonId` must already be a member of the family |
 | `DELETE /api/families/:familyId` | `OWNER` only | Cascades memberships/relationships/permissions; does not delete the Person records themselves |
-| `POST /api/families/:familyId/persons` | `EDITOR`+ on that family | Creates the person and adds them to this family in one transaction |
-| `GET /api/families/:familyId/persons` | `VIEWER`+ on that family | Supports `page`, `pageSize`, `search`, `gender`, `isLiving`, `birthYearFrom`/`birthYearTo`, `sortBy`/`sortOrder` |
-| `GET /api/persons/:id` | resolved per-person (see below) | Not family-scoped in the URL - a person can belong to multiple families |
-| `PUT /api/persons/:id` | resolved per-person | |
-| `DELETE /api/persons/:id` | resolved per-person | Permanently deletes the person from **every** family they belong to - no family-scoped "remove membership" endpoint yet |
-
-**Person permission resolution**: since a person can belong to more than one
-family tree, `GET/PUT/DELETE /api/persons/:id` aren't scoped by familyId in
-the URL. The caller's effective permission is the *highest* `PermissionRole`
-they hold across any family that person is a member of; zero overlap => 404.
-In today's flows a person is normally only ever in one family (there's no
-"add an existing person to another family" endpoint yet), so this mostly
-matters for future phases.
+| `POST /api/families/:familyId/persons` | any authenticated user | Creates the person and adds them to this family in one transaction - no permission row needed on the family (see "Open collaboration model") |
+| `GET /api/families/:familyId/persons` | any authenticated user | Supports `page`, `pageSize`, `search`, `gender`, `isLiving`, `birthYearFrom`/`birthYearTo`, `sortBy`/`sortOrder` |
+| `GET /api/persons` | any authenticated user | **Global** list across every family - no familyId. Powers the frontend's relation picker |
+| `GET /api/persons/:id` | any authenticated user | Not family-scoped - a person can belong to multiple families |
+| `PUT /api/persons/:id` | any authenticated user | |
+| `DELETE /api/persons/:id` | any authenticated user | Permanently deletes the person from **every** family they belong to - no family-scoped "remove membership" endpoint yet |
 
 | Method & path | Auth | Notes |
 |---|---|---|
-| `POST /api/families/:familyId/relationships` | `EDITOR`+ | Validates both people are members of the family, prevents parent/child cycles, canonicalizes `SPOUSE` pairs |
-| `GET /api/families/:familyId/relationships` | `VIEWER`+ | All edges in the family (no pagination - counts are small by nature) |
-| `PUT /api/relationships/:relationshipId` | resolved from the relationship's family | Only `validFrom`/`validTo`/`notes` are editable - redefining who/what a relationship connects means delete + recreate, not a PUT |
-| `DELETE /api/relationships/:relationshipId` | resolved from the relationship's family | |
-| `GET /api/families/:familyId/tree` | `VIEWER`+ | Every member person (nodes) + every relationship edge in **one** call - not one request per person |
-| `GET /api/families/:familyId/ancestors/:personId` | `VIEWER`+ | Recursive `WITH RECURSIVE` CTE over `PARENT` edges; each result includes `depth` (1 = parent, 2 = grandparent, ...) |
-| `GET /api/families/:familyId/descendants/:personId` | `VIEWER`+ | Same, walking the other direction |
+| `POST /api/families/:familyId/relationships` | any authenticated user | The two people need not already be members of this family - creating the edge auto-adds both as members instead of rejecting. Prevents parent/child cycles, canonicalizes `SPOUSE` pairs |
+| `GET /api/families/:familyId/relationships` | any authenticated user | All edges in the family (no pagination - counts are small by nature) |
+| `PUT /api/relationships/:relationshipId` | any authenticated user | Only `validFrom`/`validTo`/`notes` are editable - redefining who/what a relationship connects means delete + recreate, not a PUT |
+| `DELETE /api/relationships/:relationshipId` | any authenticated user | |
+| `GET /api/families/:familyId/tree` | any authenticated user | Every member person (nodes) + every relationship edge in **one** call - not one request per person |
+| `GET /api/families/:familyId/ancestors/:personId` | any authenticated user | Recursive `WITH RECURSIVE` CTE over `PARENT` edges; each result includes `depth` (1 = parent, 2 = grandparent, ...) |
+| `GET /api/families/:familyId/descendants/:personId` | any authenticated user | Same, walking the other direction |
 
-**Relationship business rules** (`relationships.service.ts` + `common/db/ancestry.ts`):
-- Both people must already be members of the family before they can be related (`400` otherwise).
+**Relationship business rules** (`relationships.service.ts` + `common/db/ancestry.ts`) -
+data integrity, not authorization (see "Open collaboration model" above):
 - `SPOUSE` is symmetric: always stored with `personId < relatedPersonId` (UUIDs compared lexically), computed server-side regardless of the order submitted - so "A married to B" can never be stored as two separate rows. The existing DB CHECK constraint from Phase 1 is the backstop if this logic is ever bypassed.
-- Creating a `PARENT` edge is rejected (`400`) if it would make someone their own ancestor - checked via the same recursive ancestor query the `/ancestors` endpoint uses, run inside the same transaction as the insert.
+- Creating a `PARENT` edge is rejected (`400`) if it would make someone their own ancestor - checked via the same recursive ancestor query the `/ancestors` endpoint uses, run inside the same transaction as the insert. This check is scoped per-family (it walks `PARENT` edges tagged with the acting familyId), so a cycle spanning two different families' relationship sets wouldn't be caught - a known gap, not a deliberate design choice.
 - Duplicate edges are rejected by the DB's unique constraint, surfaced as `409`.
 - Siblings are **not** a stored relationship or a dedicated endpoint - derive them client-side from `/tree`'s edges (two people who share a `PARENT` edge from the same person are siblings), matching the schema's "don't store redundant sibling links" design from Phase 1.
 
@@ -617,16 +661,25 @@ export/deletion policy).
       CRUD with family-level `PermissionRole` enforcement ✅ (manually verified,
       no automated suite yet), `relationships` + family tree traversal
       (recursive ancestor/descendant CTEs, cycle prevention, `SPOUSE`
-      canonicalization, tested) ✅. Still missing: photos, events,
-      family-level `permissions` CRUD endpoints.
+      canonicalization, tested) ✅. Authorization was later deliberately
+      reworked to an "open collaboration model" (see above) by explicit
+      request - persons/relationships are no longer `PermissionRole`-gated,
+      only families are. Still missing: photos, events, family-level
+      `permissions` CRUD endpoints.
 - [~] **Phase 3 - Frontend** (started): Angular Material added, login screen
-      ✅, dashboard as a `mat-tree` of real family/person data ✅, auth
-      plumbing (interceptor + silent refresh + route guard) ✅. Still
-      missing: family management (edit/delete), member directory,
-      person profiles/forms, relationship editor, API services for
-      persons CRUD beyond listing.
-- [ ] **Phase 4 - Family tree**: visualization, search/zoom/pan, relationship
-      editing UI, complex-structure testing.
+      ✅, auth plumbing (interceptor + silent refresh + route guard) ✅,
+      add/edit person dialogs ✅, standalone add-relation dialog ✅. Still
+      missing: family management (edit/delete), a member directory (flat
+      searchable list, separate from the tree view), person profile detail
+      view, API services for persons CRUD beyond listing.
+- [~] **Phase 4 - Family tree** (started): a real node-link visualization
+      exists (`family-tree-view/`) - generation-based layout, curved SVG
+      connectors, colored-by-generation nodes, +/- zoom - built from
+      `GET .../tree` and styled after a reference image. Still missing:
+      pan (only scroll/zoom today), search-to-highlight, branch collapsing
+      for large trees, and testing against deliberately complex/tangled
+      structures (the layout algorithm's crossing-minimization is a simple
+      DFS ordering, not optimized for heavily tangled graphs).
 - [ ] **Phase 5 - Additional features**: photo upload/gallery (storage
       abstraction), life events UI, permissions UI, optional audit history.
 - [ ] **Phase 6 - Finalization**: full test run, security review, performance

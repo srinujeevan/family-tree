@@ -1,0 +1,42 @@
+<h2 mat-dialog-title>Relate {{ data.anchorPerson.name }} to someone</h2>
+
+<form [formGroup]="form" (ngSubmit)="submit()">
+  <mat-dialog-content class="dialog-content">
+    <mat-form-field appearance="outline" class="full-width">
+      <mat-label>Relation</mat-label>
+      <mat-select formControlName="relationOption">
+        @for (option of relationOptions; track option.value) {
+          <mat-option [value]="option.value">{{ data.anchorPerson.name }} is {{ option.label.toLowerCase() }}</mat-option>
+        }
+      </mat-select>
+    </mat-form-field>
+
+    <mat-form-field appearance="outline" class="full-width">
+      <mat-label>Search for a person (any family)</mat-label>
+      <input matInput formControlName="search" placeholder="Type a name..." />
+    </mat-form-field>
+
+    @if (selectedPerson(); as selected) {
+      <p class="selected-person">Selected: <strong>{{ personLabel(selected) }}</strong></p>
+    }
+
+    <mat-selection-list class="results-list" [multiple]="false">
+      @for (person of searchResults(); track person.id) {
+        <mat-list-option (click)="selectPerson(person)" [selected]="selectedPerson()?.id === person.id">
+          {{ personLabel(person) }}
+        </mat-list-option>
+      } @empty {
+        <p class="no-results">No people found.</p>
+      }
+    </mat-selection-list>
+
+    @if (errorMessage(); as message) {
+      <p class="error-banner" role="alert">{{ message }}</p>
+    }
+  </mat-dialog-content>
+
+  <mat-dialog-actions align="end">
+    <button mat-button type="button" (click)="cancel()">Cancel</button>
+    <button mat-flat-button color="primary" type="submit" [disabled]="saving()">Add relation</button>
+  </mat-dialog-actions>
+</form>

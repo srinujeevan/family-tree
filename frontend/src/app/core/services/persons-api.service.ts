@@ -5,20 +5,20 @@ import { environment } from '../../../environments/environment';
 import { Paginated } from '../../shared/models/pagination.model';
 import { Gender, Person } from '../../shared/models/person.model';
 
-export interface CreatePersonPayload {
-  firstName: string;
-  middleName?: string;
-  lastName?: string;
-  surname?: string;
-  displayName?: string;
+export interface PersonPayload {
+  firstName?: string;
+  middleName?: string | null;
+  lastName?: string | null;
+  surname?: string | null;
+  displayName?: string | null;
   gender?: Gender;
-  dateOfBirth?: string;
-  dateOfDeath?: string;
+  dateOfBirth?: string | null;
+  dateOfDeath?: string | null;
   isBirthDateApproximate?: boolean;
-  placeOfBirth?: string;
-  currentCity?: string;
-  occupation?: string;
-  description?: string;
+  placeOfBirth?: string | null;
+  currentCity?: string | null;
+  occupation?: string | null;
+  description?: string | null;
   isLiving?: boolean;
 }
 
@@ -32,7 +32,22 @@ export class PersonsApiService {
     });
   }
 
-  create(familyId: string, payload: CreatePersonPayload): Observable<{ person: Person }> {
+  /** Every person in the system, regardless of family - used by the relation picker. */
+  listAll(search?: string): Observable<Paginated<Person>> {
+    return this.http.get<Paginated<Person>>(`${environment.apiBaseUrl}/persons`, {
+      params: { pageSize: 200, ...(search ? { search } : {}) },
+    });
+  }
+
+  getById(personId: string): Observable<{ person: Person }> {
+    return this.http.get<{ person: Person }>(`${environment.apiBaseUrl}/persons/${personId}`);
+  }
+
+  create(familyId: string, payload: PersonPayload): Observable<{ person: Person }> {
     return this.http.post<{ person: Person }>(`${environment.apiBaseUrl}/families/${familyId}/persons`, payload);
+  }
+
+  update(personId: string, payload: PersonPayload): Observable<{ person: Person }> {
+    return this.http.put<{ person: Person }>(`${environment.apiBaseUrl}/persons/${personId}`, payload);
   }
 }

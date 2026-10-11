@@ -1,5 +1,4 @@
 import type { Request, Response } from "express";
-import { PermissionRole } from "@prisma/client";
 import * as personsService from "./persons.service";
 import type { CreatePersonInput, ListPersonsQuery, UpdatePersonInput } from "./persons.validation";
 
@@ -14,21 +13,23 @@ export async function listPersonsInFamily(req: Request<{ familyId: string }>, re
   res.json(result);
 }
 
+export async function listAllPersons(req: Request, res: Response): Promise<void> {
+  const query = res.locals.query as ListPersonsQuery;
+  const result = await personsService.listAllPersons(query);
+  res.json(result);
+}
+
 export async function getPerson(req: Request, res: Response): Promise<void> {
-  const personId = req.params.id as string;
-  await personsService.requireEffectiveRole(req.user!.id, personId, PermissionRole.VIEWER);
-  const person = await personsService.getPersonById(personId);
+  const person = await personsService.getPersonById(req.params.id as string);
   res.json({ person });
 }
 
 export async function updatePerson(req: Request<{ id: string }, unknown, UpdatePersonInput>, res: Response): Promise<void> {
-  await personsService.requireEffectiveRole(req.user!.id, req.params.id, PermissionRole.EDITOR);
   const person = await personsService.updatePerson(req.params.id, req.body);
   res.json({ person });
 }
 
 export async function deletePerson(req: Request<{ id: string }>, res: Response): Promise<void> {
-  await personsService.requireEffectiveRole(req.user!.id, req.params.id, PermissionRole.EDITOR);
   await personsService.deletePerson(req.params.id);
   res.status(204).send();
 }

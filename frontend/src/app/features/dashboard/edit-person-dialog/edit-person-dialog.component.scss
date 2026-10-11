@@ -1,0 +1,32 @@
+.dialog-content {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 420px;
+  max-width: 520px;
+  max-height: 70vh;
+}
+
+.field-row {
+  display: flex;
+  flex-direction: column;
+}
+
+.two-col {
+  flex-direction: row;
+  gap: 12px;
+
+  mat-form-field {
+    flex: 1 1 0;
+  }
+}
+
+.full-width {
+  width: 100%;
+}
+
+.error-banner {
+  color: var(--mat-sys-error, #b3261e);
+  font-size: 0.875rem;
+  margin: 0 0 8px;
+}

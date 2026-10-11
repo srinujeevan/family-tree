@@ -19,12 +19,12 @@ export async function updateRelationship(
   req: Request<{ relationshipId: string }, unknown, UpdateRelationshipInput>,
   res: Response,
 ): Promise<void> {
-  const relationship = await relationshipsService.updateRelationship(req.user!, req.params.relationshipId, req.body);
+  const relationship = await relationshipsService.updateRelationship(req.params.relationshipId, req.body);
   res.json({ relationship });
 }
 
 export async function deleteRelationship(req: Request<{ relationshipId: string }>, res: Response): Promise<void> {
-  await relationshipsService.deleteRelationship(req.user!, req.params.relationshipId);
+  await relationshipsService.deleteRelationship(req.params.relationshipId);
   res.status(204).send();
 }
 

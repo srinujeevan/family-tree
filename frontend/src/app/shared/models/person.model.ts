@@ -19,4 +19,6 @@ export interface Person {
   createdBy: string;
   createdAt: string;
   updatedAt: string;
+  /** Present on responses that hydrate it (global list, get-by-id) - every family this person belongs to. */
+  families?: { id: string; familyName: string }[];
 }

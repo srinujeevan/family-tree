@@ -1,44 +1,6 @@
-import { PermissionRole, Prisma } from "@prisma/client";
-import { FAMILY_ROLE_RANK } from "../../common/auth/familyPermission";
-import { NotFoundError } from "../../common/errors/AppError";
+import { Prisma } from "@prisma/client";
 import { prisma } from "../../config/prisma";
 import type { CreatePersonInput, ListPersonsQuery, UpdatePersonInput } from "./persons.validation";
-
-/**
- * A person can belong to multiple family trees (see schema notes). Outside
- * the family-scoped routes, a caller's effective permission on a person is
- * the HIGHEST PermissionRole they hold across any family that person
- * belongs to. No overlap at all => null (treated as "not found").
- */
-async function getEffectiveRole(callerId: string, personId: string): Promise<PermissionRole | null> {
-  const memberships = await prisma.familyMembership.findMany({
-    where: { personId },
-    select: { familyId: true },
-  });
-  if (memberships.length === 0) {
-    return null;
-  }
-
-  const permissions = await prisma.familyUserPermission.findMany({
-    where: { userId: callerId, familyId: { in: memberships.map((m) => m.familyId) } },
-    select: { role: true },
-  });
-  if (permissions.length === 0) {
-    return null;
-  }
-
-  return permissions.reduce<PermissionRole>(
-    (best, p) => (FAMILY_ROLE_RANK[p.role] > FAMILY_ROLE_RANK[best] ? p.role : best),
-    permissions[0]!.role,
-  );
-}
-
-export async function requireEffectiveRole(callerId: string, personId: string, minRole: PermissionRole): Promise<void> {
-  const role = await getEffectiveRole(callerId, personId);
-  if (!role || FAMILY_ROLE_RANK[role] < FAMILY_ROLE_RANK[minRole]) {
-    throw new NotFoundError("Person not found");
-  }
-}
 
 /** isLiving defaults sensibly from dateOfDeath when the caller doesn't say otherwise. */
 function inferIsLiving(input: { dateOfDeath?: Date | null; isLiving?: boolean }): boolean | undefined {
@@ -69,9 +31,8 @@ export async function createPerson(caller: { id: string }, familyId: string, inp
   return person;
 }
 
-export async function listPersonsInFamily(familyId: string, query: ListPersonsQuery) {
-  const where: Prisma.PersonWhereInput = {
-    memberships: { some: { familyId } },
+function buildPersonFilters(query: ListPersonsQuery): Prisma.PersonWhereInput {
+  return {
     ...(query.gender ? { gender: query.gender } : {}),
     ...(query.isLiving !== undefined ? { isLiving: query.isLiving } : {}),
     ...(query.search
@@ -92,7 +53,9 @@ export async function listPersonsInFamily(familyId: string, query: ListPersonsQu
         }
       : {}),
   };
+}
 
+async function paginatePersons(where: Prisma.PersonWhereInput, query: ListPersonsQuery) {
   const [total, persons] = await Promise.all([
     prisma.person.count({ where }),
     prisma.person.findMany({
@@ -100,11 +63,12 @@ export async function listPersonsInFamily(familyId: string, query: ListPersonsQu
       orderBy: { [query.sortBy]: query.sortOrder },
       skip: (query.page - 1) * query.pageSize,
       take: query.pageSize,
+      include: { memberships: { include: { family: { select: { id: true, familyName: true } } } } },
     }),
   ]);
 
   return {
-    data: persons,
+    data: persons.map(({ memberships, ...person }) => ({ ...person, families: memberships.map((m) => m.family) })),
     pagination: {
       page: query.page,
       pageSize: query.pageSize,
@@ -112,6 +76,19 @@ export async function listPersonsInFamily(familyId: string, query: ListPersonsQu
       totalPages: Math.ceil(total / query.pageSize),
     },
   };
+}
+
+export function listPersonsInFamily(familyId: string, query: ListPersonsQuery) {
+  return paginatePersons({ ...buildPersonFilters(query), memberships: { some: { familyId } } }, query);
+}
+
+/**
+ * Every person in the system, regardless of family - used by the relation
+ * picker, since relating people is no longer restricted to one family (see
+ * relationships.service.ts).
+ */
+export function listAllPersons(query: ListPersonsQuery) {
+  return paginatePersons(buildPersonFilters(query), query);
 }
 
 export async function getPersonById(personId: string) {
