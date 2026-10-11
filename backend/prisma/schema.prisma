@@ -1,0 +1,251 @@
+// Family Tree Management System - Prisma schema
+// See /README.md for the Mermaid ER diagram and relationship notes.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+// Prisma 7 no longer reads the connection string here: Migrate reads it from
+// prisma.config.ts, and the runtime PrismaClient takes a driver adapter
+// (see src/config/prisma.ts) that itself reads DATABASE_URL.
+datasource db {
+  provider = "postgresql"
+}
+
+// ---------------------------------------------------------------------------
+// Enums
+// ---------------------------------------------------------------------------
+
+enum Gender {
+  MALE
+  FEMALE
+  OTHER
+  UNKNOWN
+  UNDISCLOSED
+
+  @@map("gender")
+}
+
+// Kept intentionally small - see PersonRelationship notes below for how
+// adoption, step-parent and former-spouse cases are represented without
+// growing this enum for every nuance.
+enum RelationshipType {
+  PARENT
+  SPOUSE
+  GUARDIAN
+
+  @@map("relationship_type")
+}
+
+enum EventType {
+  BIRTH
+  MARRIAGE
+  DEATH
+  GRADUATION
+  MIGRATION
+  OTHER
+
+  @@map("event_type")
+}
+
+enum PermissionRole {
+  OWNER
+  EDITOR
+  VIEWER
+
+  @@map("permission_role")
+}
+
+// ---------------------------------------------------------------------------
+// Models
+// ---------------------------------------------------------------------------
+
+model UserAccount {
+  id           String   @id @default(uuid()) @db.Uuid
+  fullName     String   @map("full_name") @db.VarChar(150)
+  email        String   @unique @db.VarChar(255)
+  /// Nullable to allow a future external identity provider (OAuth/SSO) to
+  /// create accounts without a local password.
+  passwordHash String?  @map("password_hash") @db.VarChar(255)
+  isActive     Boolean  @default(true) @map("is_active")
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  createdFamilies Family[]               @relation("FamilyCreator")
+  createdPersons  Person[]               @relation("PersonCreator")
+  permissions     FamilyUserPermission[]
+
+  @@map("user_accounts")
+}
+
+model Family {
+  id           String   @id @default(uuid()) @db.Uuid
+  familyName   String   @map("family_name") @db.VarChar(150)
+  description  String?  @db.Text
+  rootPersonId String?  @map("root_person_id") @db.Uuid
+  createdBy    String   @map("created_by") @db.Uuid
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  rootPerson    Person?                @relation("FamilyRootPerson", fields: [rootPersonId], references: [id], onDelete: SetNull)
+  creator       UserAccount            @relation("FamilyCreator", fields: [createdBy], references: [id], onDelete: Restrict)
+  memberships   FamilyMembership[]
+  relationships PersonRelationship[]
+  permissions   FamilyUserPermission[]
+
+  @@index([createdBy])
+  @@index([rootPersonId])
+  @@map("families")
+}
+
+model Person {
+  id                     String    @id @default(uuid()) @db.Uuid
+  firstName              String    @map("first_name") @db.VarChar(100)
+  middleName             String?   @map("middle_name") @db.VarChar(100)
+  lastName               String?   @map("last_name") @db.VarChar(100)
+  /// Only populate when distinct in meaning from lastName (e.g. maiden name
+  /// conventions in some cultures). Most records should leave this null.
+  surname                String?   @db.VarChar(100)
+  displayName            String?   @map("display_name") @db.VarChar(200)
+  gender                 Gender    @default(UNKNOWN)
+  dateOfBirth            DateTime? @map("date_of_birth") @db.Date
+  dateOfDeath            DateTime? @map("date_of_death") @db.Date
+  isBirthDateApproximate Boolean   @default(false) @map("is_birth_date_approximate")
+  placeOfBirth           String?   @map("place_of_birth") @db.VarChar(200)
+  currentCity            String?   @map("current_city") @db.VarChar(200)
+  occupation             String?   @db.VarChar(150)
+  description            String?   @db.Text
+  isLiving               Boolean   @default(true) @map("is_living")
+  createdBy              String    @map("created_by") @db.Uuid
+  createdAt              DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt              DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  creator               UserAccount          @relation("PersonCreator", fields: [createdBy], references: [id], onDelete: Restrict)
+  memberships           FamilyMembership[]
+  photos                PersonPhoto[]
+  events                PersonEvent[]
+  // Edges where this person is the "subject" side (e.g. the parent in a
+  // PARENT relationship). See PersonRelationship for direction semantics.
+  relationshipsAsFirst  PersonRelationship[] @relation("RelationshipAsPerson")
+  relationshipsAsSecond PersonRelationship[] @relation("RelationshipAsRelatedPerson")
+  rootOfFamilies        Family[]             @relation("FamilyRootPerson")
+
+  @@index([lastName, firstName])
+  @@index([dateOfBirth])
+  @@index([createdBy])
+  @@map("persons")
+}
+
+model FamilyMembership {
+  id             String   @id @default(uuid()) @db.Uuid
+  familyId       String   @map("family_id") @db.Uuid
+  personId       String   @map("person_id") @db.Uuid
+  /// Free-form classification (e.g. "head", "member"); not a fixed enum
+  /// because households describe this differently across families.
+  membershipRole String?  @map("membership_role") @db.VarChar(50)
+  addedAt        DateTime @default(now()) @map("added_at") @db.Timestamptz(6)
+
+  family Family @relation(fields: [familyId], references: [id], onDelete: Cascade)
+  person Person @relation(fields: [personId], references: [id], onDelete: Cascade)
+
+  @@unique([familyId, personId])
+  @@index([personId])
+  @@map("family_memberships")
+}
+
+/// A single directed edge between two persons within one family tree.
+///
+/// Direction semantics by relationshipType:
+///   PARENT   -> personId is the PARENT of relatedPersonId (the child).
+///   GUARDIAN -> personId is the GUARDIAN of relatedPersonId (the ward).
+///   SPOUSE   -> symmetric. To avoid storing the same couple twice
+///               (A-SPOUSE-B and B-SPOUSE-A), the pair is always written with
+///               personId < relatedPersonId (UUID lexical order). This is
+///               enforced both in the relationship service and by a DB CHECK
+///               constraint added in the 0002 migration.
+///
+/// Siblings are intentionally NOT stored here - they are derived at query
+/// time from two PARENT edges that share the same relatedPersonId.
+///
+/// Future relationship nuances (adoption, step-parent, former spouse) are
+/// handled without new tables:
+///   - "Former spouse" = a SPOUSE row with validTo set.
+///   - Adoption / step-parent will be added as new RelationshipType enum
+///     values (a migration) once needed, reusing this same table.
+///
+/// Cycle prevention (a person cannot be their own ancestor) and "both people
+/// belong to this family" checks are enforced in the application service
+/// layer via a recursive query, inside a transaction - not expressible as a
+/// plain SQL constraint.
+model PersonRelationship {
+  id               String           @id @default(uuid()) @db.Uuid
+  familyId         String           @map("family_id") @db.Uuid
+  personId         String           @map("person_id") @db.Uuid
+  relatedPersonId  String           @map("related_person_id") @db.Uuid
+  relationshipType RelationshipType @map("relationship_type")
+  validFrom        DateTime?        @map("valid_from") @db.Date
+  validTo          DateTime?        @map("valid_to") @db.Date
+  notes            String?          @db.Text
+  createdAt        DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  family        Family @relation(fields: [familyId], references: [id], onDelete: Cascade)
+  person        Person @relation("RelationshipAsPerson", fields: [personId], references: [id], onDelete: Cascade)
+  relatedPerson Person @relation("RelationshipAsRelatedPerson", fields: [relatedPersonId], references: [id], onDelete: Cascade)
+
+  @@unique([familyId, personId, relatedPersonId, relationshipType], map: "uq_person_relationship")
+  @@index([familyId])
+  @@index([personId])
+  @@index([relatedPersonId])
+  @@map("person_relationships")
+}
+
+model PersonPhoto {
+  id         String   @id @default(uuid()) @db.Uuid
+  personId   String   @map("person_id") @db.Uuid
+  /// Opaque storage key (local path or S3 object key) - never a client-
+  /// supplied file path. Resolved through the storage abstraction.
+  storageKey String   @map("storage_key") @db.VarChar(500)
+  fileName   String   @map("file_name") @db.VarChar(255)
+  mimeType   String   @map("mime_type") @db.VarChar(100)
+  isPrimary  Boolean  @default(false) @map("is_primary")
+  caption    String?  @db.VarChar(300)
+  uploadedAt DateTime @default(now()) @map("uploaded_at") @db.Timestamptz(6)
+
+  person Person @relation(fields: [personId], references: [id], onDelete: Cascade)
+
+  // "Only one primary photo per person" is enforced by a partial unique
+  // index (person_id) WHERE is_primary = true, added in the 0002 migration
+  // since Prisma's schema language cannot express partial unique indexes.
+  @@index([personId])
+  @@map("person_photos")
+}
+
+model PersonEvent {
+  id          String    @id @default(uuid()) @db.Uuid
+  personId    String    @map("person_id") @db.Uuid
+  eventType   EventType @map("event_type")
+  eventDate   DateTime? @map("event_date") @db.Date
+  place       String?   @db.VarChar(200)
+  description String?   @db.Text
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  person Person @relation(fields: [personId], references: [id], onDelete: Cascade)
+
+  @@index([personId])
+  @@map("person_events")
+}
+
+model FamilyUserPermission {
+  id        String         @id @default(uuid()) @db.Uuid
+  familyId  String         @map("family_id") @db.Uuid
+  userId    String         @map("user_id") @db.Uuid
+  role      PermissionRole @default(VIEWER)
+  createdAt DateTime       @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  family Family      @relation(fields: [familyId], references: [id], onDelete: Cascade)
+  user   UserAccount @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([familyId, userId])
+  @@index([userId])
+  @@map("family_user_permissions")
+}
