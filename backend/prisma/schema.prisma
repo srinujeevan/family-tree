@@ -56,6 +56,22 @@ enum PermissionRole {
   @@map("permission_role")
 }
 
+/// System-wide administrative role, separate from PermissionRole.
+/// PermissionRole (above) controls access to one specific family tree.
+/// UserRole controls access to user-account administration itself:
+///   SUPER_ADMIN - create/view ADMIN and USER accounts.
+///   ADMIN       - create/view USER accounts only.
+///   USER        - view other USER accounts only; cannot create accounts.
+/// Holding UserRole.ADMIN/SUPER_ADMIN grants no implicit access to any
+/// family's data - that always goes through PermissionRole.
+enum UserRole {
+  SUPER_ADMIN
+  ADMIN
+  USER
+
+  @@map("user_role")
+}
+
 // ---------------------------------------------------------------------------
 // Models
 // ---------------------------------------------------------------------------
@@ -68,6 +84,7 @@ model UserAccount {
   /// create accounts without a local password.
   passwordHash String?  @map("password_hash") @db.VarChar(255)
   isActive     Boolean  @default(true) @map("is_active")
+  role         UserRole @default(USER)
   createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt    DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
@@ -75,6 +92,7 @@ model UserAccount {
   createdPersons  Person[]               @relation("PersonCreator")
   permissions     FamilyUserPermission[]
 
+  @@index([role])
   @@map("user_accounts")
 }
 

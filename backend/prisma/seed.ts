@@ -4,7 +4,7 @@
  *
  * Run with: npm run db:seed (also runs automatically after `prisma migrate reset`).
  */
-import { Gender, RelationshipType, EventType, PermissionRole, type Person } from '@prisma/client';
+import { Gender, RelationshipType, EventType, PermissionRole, UserRole, type Person } from '@prisma/client';
 import bcrypt from 'bcrypt';
 import { prisma } from '../src/config/prisma';
 
@@ -18,6 +18,9 @@ async function main() {
 
   await prisma.$transaction(
     async (tx) => {
+      // Bootstrap account. There is no API endpoint that creates a
+      // SUPER_ADMIN (by design, to prevent privilege escalation) - the first
+      // one always comes from the seed script or direct DB access.
       const owner = await tx.userAccount.upsert({
         where: { email: 'demo.owner@familytree.local' },
         update: {},
@@ -26,6 +29,33 @@ async function main() {
           email: 'demo.owner@familytree.local',
           passwordHash,
           isActive: true,
+          role: UserRole.SUPER_ADMIN,
+        },
+      });
+
+      // Demonstrates the rest of the system-role hierarchy (see UserRole in
+      // schema.prisma): an ADMIN who can create/view USER accounts, and a
+      // plain USER who can only view other USER accounts.
+      await tx.userAccount.upsert({
+        where: { email: 'demo.admin@familytree.local' },
+        update: {},
+        create: {
+          fullName: 'Demo Admin',
+          email: 'demo.admin@familytree.local',
+          passwordHash,
+          isActive: true,
+          role: UserRole.ADMIN,
+        },
+      });
+      await tx.userAccount.upsert({
+        where: { email: 'demo.user@familytree.local' },
+        update: {},
+        create: {
+          fullName: 'Demo User',
+          email: 'demo.user@familytree.local',
+          passwordHash,
+          isActive: true,
+          role: UserRole.USER,
         },
       });
 
@@ -252,8 +282,11 @@ async function main() {
 
       console.log('Seed complete:');
       console.log(`  Family:  ${family.familyName} (${family.id})`);
-      console.log(`  Owner:   ${owner.email} / password: Passw0rd!2026`);
       console.log(`  Persons: ${allPersons.length}`);
+      console.log('  Accounts (all use password: Passw0rd!2026):');
+      console.log(`    SUPER_ADMIN: ${owner.email}`);
+      console.log('    ADMIN:       demo.admin@familytree.local');
+      console.log('    USER:        demo.user@familytree.local');
     },
     { timeout: 20_000 },
   );

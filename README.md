@@ -116,6 +116,7 @@ erDiagram
         string email UK
         string passwordHash "nullable"
         boolean isActive
+        enum role "SUPER_ADMIN | ADMIN | USER"
     }
     FAMILY {
         uuid id PK
@@ -215,6 +216,38 @@ traversal, not a row-local check - they belong in the Phase 2 relationship
 service, inside a transaction:
 - Preventing parent/child cycles (nobody can be their own ancestor).
 - Verifying both people in a relationship belong to the stated family.
+
+### System roles vs. family roles
+
+There are **two independent authorization axes** - don't conflate them:
+
+| | `UserRole` (`user_accounts.role`) | `PermissionRole` (`family_user_permissions.role`) |
+|---|---|---|
+| Scope | Global, one per account | Per family tree, one row per (family, user) |
+| Question it answers | "Can this account administer other *accounts*?" | "Can this account edit *this specific family tree*?" |
+| Values | `SUPER_ADMIN`, `ADMIN`, `USER` | `OWNER`, `EDITOR`, `VIEWER` |
+
+`UserRole` permission matrix (enforced server-side in the Phase 2 `users`
+module, not just hidden in the UI):
+
+| Caller role | Can create | Can view |
+|---|---|---|
+| `SUPER_ADMIN` | `ADMIN`, `USER` accounts | all accounts |
+| `ADMIN` | `USER` accounts only | `USER` accounts only |
+| `USER` | nothing (403) | other `USER` accounts only |
+
+Notes:
+- **No API endpoint ever creates a `SUPER_ADMIN`** - not even another
+  `SUPER_ADMIN` can do it through the API. The first (and any further)
+  super-admin is provisioned via the seed script or direct database access.
+  This is deliberate: it removes privilege escalation to the top role as an
+  API attack surface entirely.
+- Public self-registration (`POST /api/auth/register`) always creates a
+  `USER`-role account. `ADMIN`/`SUPER_ADMIN` accounts are only ever
+  provisioned by an existing admin through the protected `users` endpoints.
+- Holding `ADMIN` or `SUPER_ADMIN` grants **no** implicit access to any
+  family's data. Seeing someone's family tree still always goes through
+  `FamilyUserPermission` - the two systems never short-circuit each other.
 
 ## 4. Project folder structure
 
@@ -323,6 +356,7 @@ backend/prisma/migrations/
   migration_lock.toml
   20261011120000_init/migration.sql                 generated schema (tables, enums, FKs, indexes)
   20261011120100_add_check_constraints/migration.sql  CHECK constraints + partial unique index
+  20261011130000_add_user_role/migration.sql          UserRole enum + user_accounts.role column
 ```
 
 **How `20261011120000_init` was produced**: this sandbox has no Docker/Postgres
@@ -362,12 +396,19 @@ cd backend
 npm run db:seed
 ```
 
-Creates one demo user, one family ("The Reddy Family"), and 10 people across
-three generations - including a divorced "former spouse" example and
-siblings derived from shared parents - so the relationship model, the future
-tree view, and API work all have realistic data immediately.
+Creates three demo accounts (one per `UserRole`), one family ("The Reddy
+Family"), and 10 people across three generations - including a divorced
+"former spouse" example and siblings derived from shared parents - so the
+relationship model, the role hierarchy, the future tree view, and API work
+all have realistic data immediately.
 
-- Demo login: `demo.owner@familytree.local` / `Passw0rd!2026` (local dev only)
+All demo accounts use password `Passw0rd!2026` (local dev only):
+
+| Email | `UserRole` | Notes |
+|---|---|---|
+| `demo.owner@familytree.local` | `SUPER_ADMIN` | Also owns the seeded family (`PermissionRole.OWNER`) |
+| `demo.admin@familytree.local` | `ADMIN` | Can create/view `USER` accounts |
+| `demo.user@familytree.local` | `USER` | Can view other `USER` accounts only |
 
 `prisma migrate reset` (drops the DB, reapplies all migrations, then seeds
 automatically) is the fastest way to get back to a clean state:
