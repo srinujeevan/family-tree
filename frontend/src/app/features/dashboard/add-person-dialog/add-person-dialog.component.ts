@@ -6,21 +6,23 @@ import { MatInputModule } from '@angular/material/input';
 import { MatSelectModule } from '@angular/material/select';
 import { MatCheckboxModule } from '@angular/material/checkbox';
 import { MatButtonModule } from '@angular/material/button';
-import { MatListModule } from '@angular/material/list';
+import { MatAutocompleteModule, MatAutocompleteSelectedEvent } from '@angular/material/autocomplete';
 import { HttpErrorResponse } from '@angular/common/http';
-import { debounceTime, distinctUntilChanged, switchMap } from 'rxjs';
+import { Subject, debounceTime, distinctUntilChanged, switchMap } from 'rxjs';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
+import { FamilyTreeApiService } from '../../../core/services/family-tree-api.service';
 import { PersonsApiService } from '../../../core/services/persons-api.service';
 import { RelationshipsApiService, CreateRelationshipPayload } from '../../../core/services/relationships-api.service';
 import { Gender, Person } from '../../../shared/models/person.model';
 import { RelationshipType } from '../../../shared/models/relationship.model';
 import { ApiError } from '../../../shared/models/pagination.model';
+import { NO_PARENTS_RECORDED, relateAsSibling } from '../sibling-relation';
 
 export interface AddPersonDialogData {
   familyId: string;
 }
 
-type RelationOption = 'PARENT_OF' | 'CHILD_OF' | 'SPOUSE_OF' | 'GUARDIAN_OF' | 'WARD_OF';
+type RelationOption = 'PARENT_OF' | 'CHILD_OF' | 'SIBLING_OF' | 'SPOUSE_OF' | 'GUARDIAN_OF' | 'WARD_OF';
 
 const GENDER_OPTIONS: { value: Gender; label: string }[] = [
   { value: 'MALE', label: 'Male' },
@@ -33,6 +35,7 @@ const GENDER_OPTIONS: { value: Gender; label: string }[] = [
 const RELATION_OPTIONS: { value: RelationOption; label: string }[] = [
   { value: 'PARENT_OF', label: 'Parent of' },
   { value: 'CHILD_OF', label: 'Child of' },
+  { value: 'SIBLING_OF', label: 'Sibling of' },
   { value: 'SPOUSE_OF', label: 'Spouse of' },
   { value: 'GUARDIAN_OF', label: 'Guardian of' },
   { value: 'WARD_OF', label: 'Ward of (they are the guardian)' },
@@ -55,7 +58,7 @@ function personLabel(person: Person): string {
     MatSelectModule,
     MatCheckboxModule,
     MatButtonModule,
-    MatListModule,
+    MatAutocompleteModule,
   ],
   templateUrl: './add-person-dialog.component.html',
   styleUrl: './add-person-dialog.component.scss',
@@ -64,6 +67,7 @@ export class AddPersonDialogComponent {
   private readonly fb = inject(FormBuilder);
   private readonly personsApi = inject(PersonsApiService);
   private readonly relationshipsApi = inject(RelationshipsApiService);
+  private readonly familyTreeApi = inject(FamilyTreeApiService);
   private readonly dialogRef = inject(MatDialogRef<AddPersonDialogComponent>);
   readonly data = inject<AddPersonDialogData>(MAT_DIALOG_DATA);
 
@@ -73,6 +77,7 @@ export class AddPersonDialogComponent {
 
   readonly searchResults = signal<Person[]>([]);
   readonly selectedPerson = signal<Person | null>(null);
+  readonly searchText = signal('');
   readonly saving = signal(false);
   readonly errorMessage = signal<string | null>(null);
 
@@ -90,12 +95,16 @@ export class AddPersonDialogComponent {
     occupation: [''],
     description: [''],
     relateEnabled: [false],
-    relationSearch: [''],
     relationOption: ['PARENT_OF' as RelationOption],
   });
 
+  // Decoupled from Reactive Forms on purpose: the input's value toggles
+  // between free-typed text and a selected person's display label, which
+  // doesn't play well with a single typed FormControl<string>.
+  private readonly searchTerm$ = new Subject<string>();
+
   constructor() {
-    this.form.controls.relationSearch.valueChanges
+    this.searchTerm$
       .pipe(
         debounceTime(250),
         distinctUntilChanged(),
@@ -103,10 +112,20 @@ export class AddPersonDialogComponent {
         takeUntilDestroyed(),
       )
       .subscribe((page) => this.searchResults.set(page.data));
+    this.searchTerm$.next('');
   }
 
-  selectRelatedPerson(person: Person): void {
+  onSearchInput(event: Event): void {
+    const value = (event.target as HTMLInputElement).value;
+    this.searchText.set(value);
+    this.selectedPerson.set(null);
+    this.searchTerm$.next(value);
+  }
+
+  onOptionSelected(event: MatAutocompleteSelectedEvent): void {
+    const person = event.option.value as Person;
     this.selectedPerson.set(person);
+    this.searchText.set(personLabel(person));
   }
 
   submit(): void {
@@ -152,8 +171,12 @@ export class AddPersonDialogComponent {
       return;
     }
 
-    const payload = this.buildRelationshipPayload(person.id, relatedPerson.id, relationOption);
-    this.relationshipsApi.create(this.data.familyId, payload).subscribe({
+    const request$ =
+      relationOption === 'SIBLING_OF'
+        ? relateAsSibling(this.familyTreeApi, this.relationshipsApi, this.data.familyId, person.id, relatedPerson.id)
+        : this.relationshipsApi.create(this.data.familyId, this.buildRelationshipPayload(person.id, relatedPerson.id, relationOption));
+
+    request$.subscribe({
       next: () => {
         this.saving.set(false);
         this.dialogRef.close(person);
@@ -163,7 +186,9 @@ export class AddPersonDialogComponent {
         // close the dialog with that fact rather than losing the work, but
         // surface the relation error so the user knows to add it manually.
         this.saving.set(false);
-        this.errorMessage.set(`Person created, but the relation could not be added: ${this.extractMessage(err)}`);
+        this.errorMessage.set(
+          `Person created, but the relation could not be added: ${this.extractMessage(err, relatedPerson)}`,
+        );
       },
     });
   }
@@ -171,9 +196,9 @@ export class AddPersonDialogComponent {
   private buildRelationshipPayload(
     newPersonId: string,
     selectedPersonId: string,
-    relationOption: RelationOption,
+    relationOption: Exclude<RelationOption, 'SIBLING_OF'>,
   ): CreateRelationshipPayload {
-    const typeByOption: Record<RelationOption, RelationshipType> = {
+    const typeByOption: Record<Exclude<RelationOption, 'SIBLING_OF'>, RelationshipType> = {
       PARENT_OF: 'PARENT',
       CHILD_OF: 'PARENT',
       SPOUSE_OF: 'SPOUSE',
@@ -194,7 +219,10 @@ export class AddPersonDialogComponent {
     this.errorMessage.set(this.extractMessage(err));
   }
 
-  private extractMessage(err: unknown): string {
+  private extractMessage(err: unknown, siblingTarget?: Person): string {
+    if (err instanceof Error && err.message === NO_PARENTS_RECORDED && siblingTarget) {
+      return `${personLabel(siblingTarget)} has no parents recorded in this family yet - add a parent relationship for them first, then try marking a sibling.`;
+    }
     if (err instanceof HttpErrorResponse) {
       const apiError = err.error as ApiError | undefined;
       if (apiError?.error?.message) {

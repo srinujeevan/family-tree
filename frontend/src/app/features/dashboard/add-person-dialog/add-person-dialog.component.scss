@@ -29,26 +29,6 @@
   margin: 8px 0;
 }
 
-.results-list {
-  max-height: 180px;
-  overflow-y: auto;
-  border: 1px solid var(--mat-sys-outline-variant, #ddd);
-  border-radius: 4px;
-  margin-bottom: 8px;
-}
-
-.selected-person {
-  margin: 0 0 4px;
-  font-size: 0.875rem;
-}
-
-.no-results {
-  padding: 12px;
-  color: var(--mat-sys-on-surface-variant, #666);
-  font-size: 0.875rem;
-  text-align: center;
-}
-
 .error-banner {
   color: var(--mat-sys-error, #b3261e);
   font-size: 0.875rem;

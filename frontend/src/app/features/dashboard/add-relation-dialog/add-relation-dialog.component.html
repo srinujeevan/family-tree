@@ -12,23 +12,22 @@
     </mat-form-field>
 
     <mat-form-field appearance="outline" class="full-width">
-      <mat-label>Search for a person (any family)</mat-label>
-      <input matInput formControlName="search" placeholder="Type a name..." />
+      <mat-label>Person (any family)</mat-label>
+      <input
+        matInput
+        [value]="searchText()"
+        (input)="onSearchInput($event)"
+        [matAutocomplete]="personAuto"
+        placeholder="Click to browse or type to search"
+      />
+      <mat-autocomplete #personAuto="matAutocomplete" (optionSelected)="onOptionSelected($event)">
+        @for (person of searchResults(); track person.id) {
+          <mat-option [value]="person">{{ personLabel(person) }}</mat-option>
+        } @empty {
+          <mat-option disabled>No people found</mat-option>
+        }
+      </mat-autocomplete>
     </mat-form-field>
-
-    @if (selectedPerson(); as selected) {
-      <p class="selected-person">Selected: <strong>{{ personLabel(selected) }}</strong></p>
-    }
-
-    <mat-selection-list class="results-list" [multiple]="false">
-      @for (person of searchResults(); track person.id) {
-        <mat-list-option (click)="selectPerson(person)" [selected]="selectedPerson()?.id === person.id">
-          {{ personLabel(person) }}
-        </mat-list-option>
-      } @empty {
-        <p class="no-results">No people found.</p>
-      }
-    </mat-selection-list>
 
     @if (errorMessage(); as message) {
       <p class="error-banner" role="alert">{{ message }}</p>

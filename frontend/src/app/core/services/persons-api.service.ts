@@ -32,10 +32,14 @@ export class PersonsApiService {
     });
   }
 
-  /** Every person in the system, regardless of family - used by the relation picker. */
+  /**
+   * Every person in the system, regardless of family - used by the relation
+   * picker. pageSize is capped at 100 server-side (listPersonsQuerySchema) -
+   * requesting more than that fails validation with a 422.
+   */
   listAll(search?: string): Observable<Paginated<Person>> {
     return this.http.get<Paginated<Person>>(`${environment.apiBaseUrl}/persons`, {
-      params: { pageSize: 200, ...(search ? { search } : {}) },
+      params: { pageSize: 100, ...(search ? { search } : {}) },
     });
   }
 

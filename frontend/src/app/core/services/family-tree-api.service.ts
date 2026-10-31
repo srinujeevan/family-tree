@@ -10,11 +10,22 @@ export interface FamilyTreeResponse {
   edges: PersonRelationship[];
 }
 
+export interface AncestryEntry extends Person {
+  /** Generations removed: 1 = direct parent, 2 = grandparent, etc. */
+  depth: number;
+}
+
 @Injectable({ providedIn: 'root' })
 export class FamilyTreeApiService {
   private readonly http = inject(HttpClient);
 
   getTree(familyId: string): Observable<FamilyTreeResponse> {
     return this.http.get<FamilyTreeResponse>(`${environment.apiBaseUrl}/families/${familyId}/tree`);
+  }
+
+  getAncestors(familyId: string, personId: string): Observable<{ data: AncestryEntry[] }> {
+    return this.http.get<{ data: AncestryEntry[] }>(
+      `${environment.apiBaseUrl}/families/${familyId}/ancestors/${personId}`,
+    );
   }
 }

@@ -520,14 +520,32 @@ curl http://localhost:3000/api/health/db
   date of death, place of birth, current city, occupation, description.
   Edit pre-fills from the clicked node and calls `PUT /api/persons/:id`.
   Add also has an optional "relate to someone" section (parent of / child
-  of / spouse of / guardian of / ward of), searched from **every family**
-  via `GET /api/persons` (not just the current one) - matching the backend's
-  open collaboration model. Photo upload is intentionally **not** included -
-  no storage/upload endpoint exists on the backend (Phase 5).
+  of / sibling of / spouse of / guardian of / ward of), searched from
+  **every family** via `GET /api/persons` (not just the current one) -
+  matching the backend's open collaboration model. Photo upload is
+  intentionally **not** included - no storage/upload endpoint exists on the
+  backend (Phase 5).
 - **Add Relation dialog**: the same relation picker as a standalone action
   (anchored at whichever person's node you clicked), for relating two
   people who already exist - `POST .../relationships` via
   `RelationshipsApiService`.
+- **The relation picker is a real `mat-autocomplete` dropdown**, not a
+  search-box-plus-list: clicking it immediately shows every person (fetched
+  once on dialog open), and typing filters further. It was briefly both a
+  UX ask and a real bug at the same time - the original implementation
+  requested `pageSize=200` from `PersonsApiService.listAll()`, but the
+  backend's `listPersonsQuerySchema` caps `pageSize` at 100, so *every* call
+  failed with a 422 and silently rendered "no results." Found via
+  `read_network_requests` while reproducing live, not by inspection.
+- **"Sibling of" isn't a stored relationship type** - per the schema's
+  design (see above), siblings are derived from shared `PARENT` edges, not
+  stored directly. Picking "Sibling of X" in the UI (`sibling-relation.ts`,
+  shared by both dialogs) fetches X's parents via
+  `GET .../ancestors/:personId` (depth 1) and attaches the new/anchor
+  person to each of them - achieving the same end without a new
+  relationship type. If X has no parents recorded in this family yet, this
+  fails with a clear error asking the user to add a parent first, rather
+  than silently doing nothing or erroring unhelpfully.
 - **Auth plumbing** (`core/auth/`): the access token lives in memory only
   (never `localStorage`); the refresh token is the backend's httpOnly
   cookie. An `HttpInterceptorFn` attaches the access token to every request
