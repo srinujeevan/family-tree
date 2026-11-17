@@ -18,6 +18,12 @@ export function createApp(): Express {
   const app = express();
 
   app.disable("x-powered-by");
+  // Hosts like Render terminate HTTPS at a proxy in front of the app. Trusting
+  // exactly one proxy hop lets Express see the real client IP (for the rate
+  // limiter) and the original https protocol (for Secure cookies).
+  if (env.NODE_ENV === "production") {
+    app.set("trust proxy", 1);
+  }
   app.use(helmet());
   app.use(
     cors({

@@ -9,14 +9,20 @@ const REFRESH_COOKIE_NAME = "refreshToken";
 const REFRESH_COOKIE_PATH = "/api/auth";
 const REFRESH_COOKIE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000; // keep in sync with JWT_REFRESH_EXPIRES_IN default (7d)
 
+// In production the frontend (GitHub Pages) and this API (Render) live on
+// different sites, so the refresh cookie must be SameSite=None (which in turn
+// requires Secure/HTTPS) or the browser won't send it on cross-site requests.
+// Locally both run on localhost over plain HTTP, where "lax" works.
+const IS_PRODUCTION = env.NODE_ENV === "production";
+const REFRESH_COOKIE_BASE_OPTIONS = {
+  httpOnly: true,
+  secure: IS_PRODUCTION,
+  sameSite: IS_PRODUCTION ? ("none" as const) : ("lax" as const),
+  path: REFRESH_COOKIE_PATH,
+};
+
 function setRefreshCookie(res: Response, token: string): void {
-  res.cookie(REFRESH_COOKIE_NAME, token, {
-    httpOnly: true,
-    secure: env.NODE_ENV === "production",
-    sameSite: "lax",
-    path: REFRESH_COOKIE_PATH,
-    maxAge: REFRESH_COOKIE_MAX_AGE_MS,
-  });
+  res.cookie(REFRESH_COOKIE_NAME, token, { ...REFRESH_COOKIE_BASE_OPTIONS, maxAge: REFRESH_COOKIE_MAX_AGE_MS });
 }
 
 export async function register(req: Request<unknown, unknown, RegisterInput>, res: Response): Promise<void> {
@@ -46,6 +52,7 @@ export function logout(_req: Request, res: Response): void {
   // access token remains valid until it naturally expires (short TTL by
   // design). Server-side revocation would need a token/session store, which
   // is intentionally out of scope for now.
-  res.clearCookie(REFRESH_COOKIE_NAME, { path: REFRESH_COOKIE_PATH });
+  // Must match the options the cookie was set with, or browsers won't clear it.
+  res.clearCookie(REFRESH_COOKIE_NAME, REFRESH_COOKIE_BASE_OPTIONS);
   res.status(204).send();
 }

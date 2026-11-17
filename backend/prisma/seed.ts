@@ -13,8 +13,33 @@ function spousePair(a: Person, b: Person): [Person, Person] {
   return a.id < b.id ? [a, b] : [b, a];
 }
 
+/**
+ * Password for the demo accounts. Set SEED_PASSWORD to choose it. Only a
+ * database on this machine (localhost) may fall back to the well-known dev
+ * default - seeding any remote/production database without SEED_PASSWORD
+ * fails, so a public repo's default can never end up guarding real data.
+ */
+function resolveSeedPassword(): string {
+  const fromEnv = process.env.SEED_PASSWORD;
+  if (fromEnv) {
+    if (fromEnv.length < 8) {
+      throw new Error('SEED_PASSWORD must be at least 8 characters.');
+    }
+    return fromEnv;
+  }
+  const host = new URL(process.env.DATABASE_URL ?? '').hostname;
+  if (host === 'localhost' || host === '127.0.0.1' || host === '::1') {
+    return 'Passw0rd!2026'; // local development default only
+  }
+  throw new Error(
+    `Refusing to seed remote database "${host}" with the public default password. ` +
+      'Set SEED_PASSWORD to a strong password and run the seed again.',
+  );
+}
+
 async function main() {
-  const passwordHash = await bcrypt.hash('Passw0rd!2026', 12);
+  const seedPassword = resolveSeedPassword();
+  const passwordHash = await bcrypt.hash(seedPassword, 12);
 
   await prisma.$transaction(
     async (tx) => {
@@ -283,7 +308,11 @@ async function main() {
       console.log('Seed complete:');
       console.log(`  Family:  ${family.familyName} (${family.id})`);
       console.log(`  Persons: ${allPersons.length}`);
-      console.log('  Accounts (all use password: Passw0rd!2026):');
+      console.log(
+        process.env.SEED_PASSWORD
+          ? '  Accounts (all use the password from SEED_PASSWORD):'
+          : '  Accounts (all use the local dev default password - see README):',
+      );
       console.log(`    SUPER_ADMIN: ${owner.email}`);
       console.log('    ADMIN:       demo.admin@familytree.local');
       console.log('    USER:        demo.user@familytree.local');
