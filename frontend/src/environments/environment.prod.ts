@@ -3,5 +3,5 @@
 // apiBaseUrl with the repository variable API_BASE_URL at build time, so set
 // that variable to your Render URL instead of editing this file.
 export const environment = {
-  apiBaseUrl: 'https://family-tree-api.onrender.com/api',
+  apiBaseUrl: 'https://family-tree-r2q5.onrender.com/api',
 };
