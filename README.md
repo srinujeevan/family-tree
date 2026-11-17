@@ -384,7 +384,7 @@ docker compose ps        # wait for postgres to report "healthy"
 This starts PostgreSQL 18 on `localhost:5432` with:
 - database: `family_tree_db`
 - user: `family_tree_app`
-- password: `changeme` (dev only - matches `backend/.env`)
+- password: `********` (dev only - the value is in `docker-compose.yml` / your local `backend/.env`)
 
 ## 8. Prisma migrations
 
@@ -441,7 +441,8 @@ Family"), and 10 people across three generations - including a divorced
 relationship model, the role hierarchy, the future tree view, and API work
 all have realistic data immediately.
 
-All demo accounts use password `Passw0rd!2026` (local dev only):
+All demo accounts share one password, `********` (local dev only - ask the
+project owner for it). Change it before seeding any shared or public database:
 
 | Email | `UserRole` | Notes |
 |---|---|---|
@@ -460,7 +461,7 @@ npm run prisma:migrate:reset
 
 1. **Database > New Database Connection > PostgreSQL**.
 2. Host: `localhost`, Port: `5432`, Database: `family_tree_db`.
-3. Username: `family_tree_app`, Password: `changeme`.
+3. Username: `family_tree_app`, Password: `********` (see your local `backend/.env`).
 4. Test Connection -> Finish.
 5. DBeaver is a client only; it talks to the same Postgres container the
    backend uses. No separate setup is needed on the database side.
