@@ -1,4 +1,4 @@
-import { Component, inject, signal } from '@angular/core';
+import { Component, computed, inject, signal } from '@angular/core';
 import { MatToolbarModule } from '@angular/material/toolbar';
 import { MatButtonModule } from '@angular/material/button';
 import { MatIconModule } from '@angular/material/icon';
@@ -38,6 +38,9 @@ export class DashboardComponent {
   readonly loadError = signal<string | null>(null);
   readonly families = signal<Family[]>([]);
   readonly selectedFamilyId = signal<string | null>(null);
+  readonly selectedFamilyName = computed(
+    () => this.families().find((f) => f.id === this.selectedFamilyId())?.familyName ?? 'Family Tree',
+  );
 
   constructor() {
     this.loadFamilies();

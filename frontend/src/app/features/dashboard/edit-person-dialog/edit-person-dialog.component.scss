@@ -25,6 +25,42 @@
   width: 100%;
 }
 
+.actions {
+  display: flex;
+  align-items: center;
+}
+
+.spacer {
+  flex: 1 1 auto;
+}
+
+.delete-link {
+  color: var(--mat-sys-error, #b3261e);
+}
+
+.delete-confirm {
+  margin: 0 24px 8px;
+  padding: 12px;
+  border: 1px solid var(--mat-sys-error, #b3261e);
+  border-radius: 8px;
+  font-size: 0.875rem;
+
+  p {
+    margin: 0 0 8px;
+  }
+}
+
+.delete-confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.delete-button {
+  background-color: var(--mat-sys-error, #b3261e);
+  color: var(--mat-sys-on-error, #fff);
+}
+
 .error-banner {
   color: var(--mat-sys-error, #b3261e);
   font-size: 0.875rem;

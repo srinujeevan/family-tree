@@ -7,6 +7,7 @@ export interface LayoutNode {
   y: number;
   generation: number;
   color: string;
+  ringColor: string;
 }
 
 export interface LayoutLink {
@@ -29,7 +30,27 @@ const NODE_RADIUS = 30;
 const COLUMN_SPACING = 150;
 const ROW_HEIGHT = 180;
 const MARGIN = 80;
-const GENERATION_COLORS = ['#4e8fcc', '#6fb46f', '#c75b5b', '#8b6bc7', '#d99a3e', '#4ab3a8'];
+// Each generation gets its own hue family (so a generation reads as one
+// group); within it, males get the darker shade and females the lighter one.
+// Gender is reinforced by the ring color (GENDER_RING_COLORS).
+const GENERATION_PALETTES: { male: string; female: string; other: string }[] = [
+  { male: '#2f6fb0', female: '#8bbbe8', other: '#4e8fcc' }, // blue
+  { male: '#3f8f4f', female: '#9dd49d', other: '#6fb46f' }, // green
+  { male: '#a8443f', female: '#e8a19c', other: '#c75b5b' }, // red
+  { male: '#6b4fb0', female: '#b9a5ea', other: '#8b6bc7' }, // purple
+  { male: '#b8782a', female: '#f2c987', other: '#d99a3e' }, // orange
+  { male: '#2f8f86', female: '#90d8cf', other: '#4ab3a8' }, // teal
+];
+const GENDER_RING_COLORS: Partial<Record<Person['gender'], string>> = {
+  MALE: '#7cc4ff',
+  FEMALE: '#ff8fc8',
+};
+const DEFAULT_RING_COLOR = '#ffffff';
+
+function nodeColor(gender: Person['gender'], generation: number): string {
+  const palette = GENERATION_PALETTES[generation % GENERATION_PALETTES.length]!;
+  return gender === 'MALE' ? palette.male : gender === 'FEMALE' ? palette.female : palette.other;
+}
 
 /**
  * Lays out a family's persons/relationships as a generation-based tree:
@@ -142,7 +163,14 @@ export function buildTreeLayout(persons: Person[], edges: PersonRelationship[]):
   const nodes: LayoutNode[] = persons.map((p) => {
     const pos = positions.get(p.id) ?? { x: MARGIN, y: MARGIN };
     const generation = depth.get(p.id) ?? 0;
-    return { person: p, x: pos.x, y: pos.y, generation, color: GENERATION_COLORS[generation % GENERATION_COLORS.length]! };
+    return {
+      person: p,
+      x: pos.x,
+      y: pos.y,
+      generation,
+      color: nodeColor(p.gender, generation),
+      ringColor: GENDER_RING_COLORS[p.gender] ?? DEFAULT_RING_COLOR,
+    };
   });
 
   const links: LayoutLink[] = [];

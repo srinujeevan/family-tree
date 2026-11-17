@@ -25,10 +25,6 @@
 
     <div class="field-row two-col">
       <mat-form-field appearance="outline">
-        <mat-label>Surname (if distinct from last name)</mat-label>
-        <input matInput formControlName="surname" />
-      </mat-form-field>
-      <mat-form-field appearance="outline">
         <mat-label>Gender</mat-label>
         <mat-select formControlName="gender">
           @for (option of genderOptions; track option.value) {
@@ -36,41 +32,11 @@
           }
         </mat-select>
       </mat-form-field>
-    </div>
-
-    <div class="field-row two-col">
       <mat-form-field appearance="outline">
         <mat-label>Date of birth</mat-label>
         <input matInput type="date" formControlName="dateOfBirth" />
       </mat-form-field>
-      <mat-form-field appearance="outline">
-        <mat-label>Date of death (if applicable)</mat-label>
-        <input matInput type="date" formControlName="dateOfDeath" />
-      </mat-form-field>
     </div>
-
-    <mat-checkbox formControlName="isBirthDateApproximate">Birth date is approximate</mat-checkbox>
-
-    <div class="field-row two-col">
-      <mat-form-field appearance="outline">
-        <mat-label>Place of birth</mat-label>
-        <input matInput formControlName="placeOfBirth" />
-      </mat-form-field>
-      <mat-form-field appearance="outline">
-        <mat-label>Current city</mat-label>
-        <input matInput formControlName="currentCity" />
-      </mat-form-field>
-    </div>
-
-    <mat-form-field appearance="outline" class="full-width">
-      <mat-label>Occupation</mat-label>
-      <input matInput formControlName="occupation" />
-    </mat-form-field>
-
-    <mat-form-field appearance="outline" class="full-width">
-      <mat-label>Description / biography</mat-label>
-      <textarea matInput formControlName="description" rows="3"></textarea>
-    </mat-form-field>
 
     <mat-checkbox formControlName="relateEnabled" class="relate-toggle">
       Add a relation to someone (any family)

@@ -25,10 +25,6 @@
 
     <div class="field-row two-col">
       <mat-form-field appearance="outline">
-        <mat-label>Surname (if distinct from last name)</mat-label>
-        <input matInput formControlName="surname" />
-      </mat-form-field>
-      <mat-form-field appearance="outline">
         <mat-label>Gender</mat-label>
         <mat-select formControlName="gender">
           @for (option of genderOptions; track option.value) {
@@ -36,49 +32,38 @@
           }
         </mat-select>
       </mat-form-field>
-    </div>
-
-    <div class="field-row two-col">
       <mat-form-field appearance="outline">
         <mat-label>Date of birth</mat-label>
         <input matInput type="date" formControlName="dateOfBirth" />
       </mat-form-field>
-      <mat-form-field appearance="outline">
-        <mat-label>Date of death (if applicable)</mat-label>
-        <input matInput type="date" formControlName="dateOfDeath" />
-      </mat-form-field>
     </div>
-
-    <mat-checkbox formControlName="isBirthDateApproximate">Birth date is approximate</mat-checkbox>
-
-    <div class="field-row two-col">
-      <mat-form-field appearance="outline">
-        <mat-label>Place of birth</mat-label>
-        <input matInput formControlName="placeOfBirth" />
-      </mat-form-field>
-      <mat-form-field appearance="outline">
-        <mat-label>Current city</mat-label>
-        <input matInput formControlName="currentCity" />
-      </mat-form-field>
-    </div>
-
-    <mat-form-field appearance="outline" class="full-width">
-      <mat-label>Occupation</mat-label>
-      <input matInput formControlName="occupation" />
-    </mat-form-field>
-
-    <mat-form-field appearance="outline" class="full-width">
-      <mat-label>Description / biography</mat-label>
-      <textarea matInput formControlName="description" rows="3"></textarea>
-    </mat-form-field>
 
     @if (errorMessage(); as message) {
       <p class="error-banner" role="alert">{{ message }}</p>
     }
   </mat-dialog-content>
 
-  <mat-dialog-actions align="end">
+  @if (confirmingDelete()) {
+    <div class="delete-confirm" role="alert">
+      <p>
+        Delete <strong>{{ data.person.firstName }} {{ data.person.lastName }}</strong> permanently?
+        This also removes all their relationships, in every family. This cannot be undone.
+      </p>
+      <div class="delete-confirm-actions">
+        <button mat-button type="button" (click)="confirmingDelete.set(false)" [disabled]="saving()">Keep</button>
+        <button mat-flat-button type="button" class="delete-button" (click)="deletePerson()" [disabled]="saving()">
+          Yes, delete
+        </button>
+      </div>
+    </div>
+  }
+
+  <mat-dialog-actions class="actions">
+    <button mat-button type="button" class="delete-link" (click)="confirmingDelete.set(true)" [disabled]="saving() || confirmingDelete()">
+      Delete person
+    </button>
+    <span class="spacer"></span>
     <button mat-button type="button" (click)="cancel()">Cancel</button>
-    <button mat-flat-button color="primary" type="submit" [disabled]="saving()">Save changes</button>
+    <button mat-flat-button color="primary" type="submit" [disabled]="saving() || confirmingDelete()">Save changes</button>
   </mat-dialog-actions>
 </form>

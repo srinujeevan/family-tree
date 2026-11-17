@@ -48,7 +48,7 @@
     }
 
     @if (selectedFamilyId(); as familyId) {
-      <app-family-tree-view [familyId]="familyId" />
+      <app-family-tree-view [familyId]="familyId" [familyName]="selectedFamilyName()" />
     }
   }
 </div>

@@ -51,6 +51,11 @@ export class PersonsApiService {
     return this.http.post<{ person: Person }>(`${environment.apiBaseUrl}/families/${familyId}/persons`, payload);
   }
 
+  /** Permanently deletes the person, including their relationships in every family. */
+  remove(personId: string): Observable<void> {
+    return this.http.delete<void>(`${environment.apiBaseUrl}/persons/${personId}`);
+  }
+
   update(personId: string, payload: PersonPayload): Observable<{ person: Person }> {
     return this.http.put<{ person: Person }>(`${environment.apiBaseUrl}/persons/${personId}`, payload);
   }

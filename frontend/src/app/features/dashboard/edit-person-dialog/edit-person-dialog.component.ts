@@ -4,7 +4,6 @@ import { MAT_DIALOG_DATA, MatDialogModule, MatDialogRef } from '@angular/materia
 import { MatFormFieldModule } from '@angular/material/form-field';
 import { MatInputModule } from '@angular/material/input';
 import { MatSelectModule } from '@angular/material/select';
-import { MatCheckboxModule } from '@angular/material/checkbox';
 import { MatButtonModule } from '@angular/material/button';
 import { HttpErrorResponse } from '@angular/common/http';
 import { PersonsApiService } from '../../../core/services/persons-api.service';
@@ -32,7 +31,6 @@ const GENDER_OPTIONS: { value: Gender; label: string }[] = [
     MatFormFieldModule,
     MatInputModule,
     MatSelectModule,
-    MatCheckboxModule,
     MatButtonModule,
   ],
   templateUrl: './edit-person-dialog.component.html',
@@ -46,21 +44,15 @@ export class EditPersonDialogComponent {
 
   readonly genderOptions = GENDER_OPTIONS;
   readonly saving = signal(false);
+  readonly confirmingDelete = signal(false);
   readonly errorMessage = signal<string | null>(null);
 
   readonly form = this.fb.nonNullable.group({
     firstName: [this.data.person.firstName, [Validators.required, Validators.maxLength(100)]],
     middleName: [this.data.person.middleName ?? ''],
     lastName: [this.data.person.lastName ?? ''],
-    surname: [this.data.person.surname ?? ''],
     gender: [this.data.person.gender],
     dateOfBirth: [this.toDateInputValue(this.data.person.dateOfBirth)],
-    isBirthDateApproximate: [this.data.person.isBirthDateApproximate],
-    dateOfDeath: [this.toDateInputValue(this.data.person.dateOfDeath)],
-    placeOfBirth: [this.data.person.placeOfBirth ?? ''],
-    currentCity: [this.data.person.currentCity ?? ''],
-    occupation: [this.data.person.occupation ?? ''],
-    description: [this.data.person.description ?? ''],
   });
 
   private toDateInputValue(value: string | null): string {
@@ -82,15 +74,8 @@ export class EditPersonDialogComponent {
         firstName: value.firstName,
         middleName: value.middleName || null,
         lastName: value.lastName || null,
-        surname: value.surname || null,
         gender: value.gender,
         dateOfBirth: value.dateOfBirth || null,
-        isBirthDateApproximate: value.isBirthDateApproximate,
-        dateOfDeath: value.dateOfDeath || null,
-        placeOfBirth: value.placeOfBirth || null,
-        currentCity: value.currentCity || null,
-        occupation: value.occupation || null,
-        description: value.description || null,
       })
       .subscribe({
         next: (res) => {
@@ -102,6 +87,26 @@ export class EditPersonDialogComponent {
           this.errorMessage.set(this.extractMessage(err));
         },
       });
+  }
+
+  deletePerson(): void {
+    if (this.saving()) {
+      return;
+    }
+    this.saving.set(true);
+    this.errorMessage.set(null);
+    this.personsApi.remove(this.data.person.id).subscribe({
+      next: () => {
+        this.saving.set(false);
+        // Any truthy result makes the tree view reload.
+        this.dialogRef.close({ deleted: true });
+      },
+      error: (err: unknown) => {
+        this.saving.set(false);
+        this.confirmingDelete.set(false);
+        this.errorMessage.set(this.extractMessage(err));
+      },
+    });
   }
 
   private extractMessage(err: unknown): string {

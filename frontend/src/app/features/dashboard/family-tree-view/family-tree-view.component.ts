@@ -1,4 +1,4 @@
-import { Component, computed, effect, inject, input, signal } from '@angular/core';
+import { Component, ElementRef, computed, effect, inject, input, signal, viewChild } from '@angular/core';
 import { MatIconModule } from '@angular/material/icon';
 import { MatButtonModule } from '@angular/material/button';
 import { MatMenuModule } from '@angular/material/menu';
@@ -10,6 +10,7 @@ import { AddPersonDialogComponent } from '../add-person-dialog/add-person-dialog
 import { EditPersonDialogComponent } from '../edit-person-dialog/edit-person-dialog.component';
 import { AddRelationDialogComponent } from '../add-relation-dialog/add-relation-dialog.component';
 import { buildTreeLayout, LayoutNode, NODE_RADIUS, TreeLayout } from './tree-layout';
+import { exportTreeSvgToPdf } from './tree-pdf-export';
 
 @Component({
   selector: 'app-family-tree-view',
@@ -20,6 +21,12 @@ import { buildTreeLayout, LayoutNode, NODE_RADIUS, TreeLayout } from './tree-lay
 })
 export class FamilyTreeViewComponent {
   readonly familyId = input.required<string>();
+  /** Used as the PDF title and file name. */
+  readonly familyName = input<string>('Family Tree');
+
+  private readonly treeSvg = viewChild<ElementRef<SVGSVGElement>>('treeSvg');
+  readonly exporting = signal(false);
+  readonly exportError = signal<string | null>(null);
 
   private readonly treeApi = inject(FamilyTreeApiService);
   private readonly dialog = inject(MatDialog);
@@ -69,17 +76,44 @@ export class FamilyTreeViewComponent {
     this.zoom.set(1);
   }
 
+  async downloadPdf(): Promise<void> {
+    const svg = this.treeSvg()?.nativeElement;
+    const layout = this.layout();
+    if (!svg || !layout || this.exporting()) {
+      return;
+    }
+    this.exporting.set(true);
+    this.exportError.set(null);
+    try {
+      const name = this.familyName();
+      const safeName = name.replace(/[^a-z0-9]+/gi, '-').replace(/^-|-$/g, '').toLowerCase() || 'family-tree';
+      const date = new Date().toISOString().slice(0, 10);
+      await exportTreeSvgToPdf(svg, { width: layout.width, height: layout.height }, name, `${safeName}-${date}.pdf`);
+    } catch {
+      this.exportError.set('Could not create the PDF. Please try again.');
+    } finally {
+      this.exporting.set(false);
+    }
+  }
+
   displayName(person: Person): string {
     return [person.firstName, person.lastName].filter(Boolean).join(' ');
   }
 
   lifespan(person: Person): string {
-    const birth = person.dateOfBirth ? new Date(person.dateOfBirth).getFullYear() : '?';
-    if (!person.isLiving) {
-      const death = person.dateOfDeath ? new Date(person.dateOfDeath).getFullYear() : '?';
+    // Returns '' when no dates are known, so the tree shows no placeholder like "b. ?".
+    const birth = person.dateOfBirth ? new Date(person.dateOfBirth).getFullYear() : null;
+    const death = !person.isLiving && person.dateOfDeath ? new Date(person.dateOfDeath).getFullYear() : null;
+    if (birth && death) {
       return `${birth} - ${death}`;
     }
-    return `b. ${birth}`;
+    if (birth) {
+      return `b. ${birth}`;
+    }
+    if (death) {
+      return `d. ${death}`;
+    }
+    return '';
   }
 
   initials(person: Person): string {
