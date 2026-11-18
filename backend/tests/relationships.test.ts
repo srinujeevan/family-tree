@@ -187,6 +187,44 @@ describe("relationships", () => {
     expect(await prisma.person.count({ where: { id: { in: [abc, child1, child2, grandchild, inLaw] } } })).toBe(5);
   });
 
+  it("adding a child offers the parent's other families, adds the child there when chosen, and undoes it", async () => {
+    const famA = await createOwnerContext();
+    const famB = await createOwnerContext();
+    const dad = await famA.addPerson("Dad");
+    const relate = (ctx: typeof famA, body: object) =>
+      request(app).post(`/api/families/${ctx.familyId}/relationships`).set("Authorization", `Bearer ${ctx.token}`).send(body);
+    // Dad also belongs to family B (e.g. after a marriage link there).
+    const bMember = await famB.addPerson("BMember");
+    await relate(famB, { personId: bMember, relatedPersonId: dad, relationshipType: RelationshipType.SPOUSE });
+    const child = await famA.addPerson("NewChild");
+
+    const preview = await request(app)
+      .post(`/api/families/${famA.familyId}/relationships/preview-child-families`)
+      .set("Authorization", `Bearer ${famA.token}`)
+      .send({ parentId: dad, childId: child });
+    expect(preview.status).toBe(200);
+    expect(preview.body.families.map((f: { familyId: string }) => f.familyId)).toEqual([famB.familyId]);
+
+    const res = await relate(famA, {
+      personId: dad,
+      relatedPersonId: child,
+      relationshipType: RelationshipType.PARENT,
+      alsoAddToFamilyIds: [famB.familyId],
+    });
+    expect(res.status).toBe(201);
+    expect(res.body.addedElsewhere).toEqual([{ familyId: famB.familyId, personIds: [child] }]);
+    const treeB = await request(app).get(`/api/families/${famB.familyId}/tree`).set("Authorization", `Bearer ${famB.token}`);
+    expect(treeB.body.nodes.map((n: { id: string }) => n.id)).toContain(child);
+    expect(treeB.body.edges.some((e: { relatedPersonId: string }) => e.relatedPersonId === child)).toBe(true);
+
+    await request(app)
+      .post(`/api/families/${famA.familyId}/relationships/undo`)
+      .set("Authorization", `Bearer ${famA.token}`)
+      .send({ relationshipIds: [res.body.relationship.id], addedPersonIds: res.body.addedPersonIds, addedElsewhere: res.body.addedElsewhere });
+    const afterB = await request(app).get(`/api/families/${famB.familyId}/tree`).set("Authorization", `Bearer ${famB.token}`);
+    expect(afterB.body.nodes.map((n: { id: string }) => n.id)).not.toContain(child);
+  });
+
   it("linking without includeRelatives adds only the linked person, as before", async () => {
     const f1 = await createOwnerContext();
     const f2 = await createOwnerContext();

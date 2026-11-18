@@ -3,6 +3,7 @@ import * as relationshipsService from "./relationships.service";
 import type {
   CreateRelationshipInput,
   PreviewAdditionsInput,
+  PreviewChildFamiliesInput,
   UndoLinkInput,
   UpdateRelationshipInput,
 } from "./relationships.validation";
@@ -11,8 +12,16 @@ export async function createRelationship(
   req: Request<{ familyId: string }, unknown, CreateRelationshipInput>,
   res: Response,
 ): Promise<void> {
-  const { relationship, addedPersonIds } = await relationshipsService.createRelationship(req.params.familyId, req.body);
-  res.status(201).json({ relationship, addedPersonIds });
+  const result = await relationshipsService.createRelationship(req.params.familyId, req.body);
+  res.status(201).json(result);
+}
+
+export async function previewChildFamilies(
+  req: Request<{ familyId: string }, unknown, PreviewChildFamiliesInput>,
+  res: Response,
+): Promise<void> {
+  const families = await relationshipsService.previewChildFamilies(req.params.familyId, req.body.parentId, req.body.childId);
+  res.json({ families });
 }
 
 export async function previewAdditions(
@@ -24,7 +33,12 @@ export async function previewAdditions(
 }
 
 export async function undoLink(req: Request<{ familyId: string }, unknown, UndoLinkInput>, res: Response): Promise<void> {
-  await relationshipsService.undoLink(req.params.familyId, req.body.relationshipIds, req.body.addedPersonIds);
+  await relationshipsService.undoLink(
+    req.params.familyId,
+    req.body.relationshipIds,
+    req.body.addedPersonIds,
+    req.body.addedElsewhere,
+  );
   res.status(204).send();
 }
 

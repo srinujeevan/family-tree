@@ -45,7 +45,7 @@
     @if (form.controls.relateEnabled.value) {
       <mat-form-field appearance="outline" class="full-width">
         <mat-label>Relation</mat-label>
-        <mat-select formControlName="relationOption">
+        <mat-select formControlName="relationOption" (selectionChange)="resetPreviews()">
           @for (option of relationOptions; track option.value) {
             <mat-option [value]="option.value">New person is {{ option.label.toLowerCase() }}</mat-option>
           }
@@ -71,13 +71,23 @@
       </mat-form-field>
     }
 
-    @if (previewPeople(); as people) {
+    @if (childFamilies(); as families) {
+      <app-child-families-preview
+        [families]="families"
+        [parentName]="selectedPerson()?.firstName ?? ''"
+        [childName]="newPersonName()"
+        [saving]="saving()"
+        (confirm)="save($event)"
+        (skip)="save([])"
+        (back)="resetPreviews()"
+      />
+    } @else if (previewPeople(); as people) {
       <app-relatives-preview
         [people]="people"
         [saving]="saving()"
-        (addAll)="save(true)"
-        (linkOnly)="save(false)"
-        (back)="previewPeople.set(null)"
+        (addAll)="chooseRelatives(true)"
+        (linkOnly)="chooseRelatives(false)"
+        (back)="resetPreviews()"
       />
     }
 
@@ -86,7 +96,7 @@
     }
   </mat-dialog-content>
 
-  @if (!previewPeople()) {
+  @if (!previewPeople() && !childFamilies()) {
     <mat-dialog-actions align="end">
       <button mat-button type="button" (click)="cancel()">Cancel</button>
       <button mat-flat-button color="primary" type="submit" [disabled]="saving()">Add member</button>

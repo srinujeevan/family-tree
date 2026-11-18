@@ -10,12 +10,28 @@ export interface CreateRelationshipPayload {
   relationshipType: RelationshipType;
   /** Also add the linked person's descendants and their spouses to this family. */
   includeRelatives?: boolean;
+  /** PARENT links: other families of the parent the child should also join. */
+  alsoAddToFamilyIds?: string[];
+}
+
+export interface FamilyAddition {
+  familyId: string;
+  personIds: string[];
 }
 
 export interface CreateRelationshipResponse {
   relationship: PersonRelationship;
   /** People this action added to the family - what UNDO removes again. */
   addedPersonIds: string[];
+  /** People this action added to OTHER families (child added to the parent's other families). */
+  addedElsewhere?: FamilyAddition[];
+}
+
+export interface ChildFamilyPreview {
+  familyId: string;
+  familyName: string;
+  /** For an existing child: who would join (child + descendants + spouses). Empty for a brand-new child. */
+  people: PreviewPerson[];
 }
 
 export type AdditionReason = 'linked' | 'descendant' | 'spouse';
@@ -43,11 +59,25 @@ export class RelationshipsApiService {
     );
   }
 
-  /** Reverses one link action: removes its relationships and the people it added to this family. */
-  undoLink(familyId: string, relationshipIds: string[], addedPersonIds: string[]): Observable<void> {
+  /** Other families of `parentId` that a child could also be added to. Read-only. */
+  previewChildFamilies(familyId: string, parentId: string, childId?: string): Observable<{ families: ChildFamilyPreview[] }> {
+    return this.http.post<{ families: ChildFamilyPreview[] }>(
+      `${environment.apiBaseUrl}/families/${familyId}/relationships/preview-child-families`,
+      { parentId, childId },
+    );
+  }
+
+  /** Reverses one link action: removes its relationships and the people it added (here and in other families). */
+  undoLink(
+    familyId: string,
+    relationshipIds: string[],
+    addedPersonIds: string[],
+    addedElsewhere: FamilyAddition[] = [],
+  ): Observable<void> {
     return this.http.post<void>(`${environment.apiBaseUrl}/families/${familyId}/relationships/undo`, {
       relationshipIds,
       addedPersonIds,
+      addedElsewhere,
     });
   }
 }

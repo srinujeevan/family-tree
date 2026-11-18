@@ -125,28 +125,86 @@ export async function previewAdditions(
     .sort((a, b) => order[a.reason] - order[b.reason] || a.firstName.localeCompare(b.firstName));
 }
 
+export interface FamilyAddition {
+  familyId: string;
+  personIds: string[];
+}
+
+export interface ChildFamilyPreview {
+  familyId: string;
+  familyName: string;
+  /** Who would join that family: the child (if they already exist) plus their descendants and spouses. */
+  people: PreviewPerson[];
+}
+
+/**
+ * The other families a child could also be added to when made a child of
+ * `parentId`: every family the parent belongs to except `familyId` (and,
+ * for an existing child, families they're already in).
+ */
+export async function previewChildFamilies(
+  familyId: string,
+  parentId: string,
+  childId?: string,
+  client: Prisma.TransactionClient | typeof prisma = prisma,
+): Promise<ChildFamilyPreview[]> {
+  const parentFamilies = await client.familyMembership.findMany({
+    where: { personId: parentId, familyId: { not: familyId } },
+    select: { family: { select: { id: true, familyName: true } } },
+  });
+  const childFamilyIds = childId
+    ? new Set(
+        (await client.familyMembership.findMany({ where: { personId: childId }, select: { familyId: true } })).map(
+          (m) => m.familyId,
+        ),
+      )
+    : new Set<string>();
+
+  const result: ChildFamilyPreview[] = [];
+  for (const { family } of parentFamilies) {
+    if (childFamilyIds.has(family.id)) continue;
+    const people = childId ? await previewAdditions(family.id, [childId], client) : [];
+    result.push({ familyId: family.id, familyName: family.familyName, people });
+  }
+  return result.sort((a, b) => a.familyName.localeCompare(b.familyName));
+}
+
+/**
+ * Removes the given people from `familyId` - but only those who still belong
+ * to at least one other family, so nobody is ever left without a family.
+ */
+async function removeMemberships(tx: Prisma.TransactionClient, familyId: string, personIds: string[]): Promise<void> {
+  if (personIds.length === 0) return;
+  const otherMemberships = await tx.familyMembership.findMany({
+    where: { personId: { in: personIds }, familyId: { not: familyId } },
+    select: { personId: true },
+  });
+  const safeToRemove = [...new Set(otherMemberships.map((m) => m.personId))];
+  if (safeToRemove.length > 0) {
+    await tx.familyMembership.deleteMany({ where: { familyId, personId: { in: safeToRemove } } });
+  }
+}
+
 /**
  * Reverses one link action (the UNDO bar): deletes the given relationship
- * rows of this family and removes the given people from this family again.
- * Nobody is deleted, and a person is only removed from this family if they
- * still belong to at least one other family - never left orphaned.
+ * rows of this family and removes the people that action added - from this
+ * family and from any other families it added them to. Nobody is deleted.
  */
-export async function undoLink(familyId: string, relationshipIds: string[], addedPersonIds: string[]): Promise<void> {
+export async function undoLink(
+  familyId: string,
+  relationshipIds: string[],
+  addedPersonIds: string[],
+  addedElsewhere: FamilyAddition[] = [],
+): Promise<void> {
   await prisma.$transaction(async (tx) => {
     if (relationshipIds.length > 0) {
       await tx.personRelationship.deleteMany({ where: { id: { in: relationshipIds }, familyId } });
     }
-    if (addedPersonIds.length === 0) {
-      return;
+    // Other families first, so people still count as members here while those are checked.
+    for (const addition of addedElsewhere) {
+      await removeMemberships(tx, addition.familyId, addition.personIds);
     }
-    const otherMemberships = await tx.familyMembership.findMany({
-      where: { personId: { in: addedPersonIds }, familyId: { not: familyId } },
-      select: { personId: true },
-    });
-    const safeToRemove = [...new Set(otherMemberships.map((m) => m.personId))];
-    if (safeToRemove.length > 0) {
-      await tx.familyMembership.deleteMany({ where: { familyId, personId: { in: safeToRemove } } });
-    }
+    await removeMemberships(tx, familyId, addedPersonIds);
   });
 }
 
@@ -189,7 +247,24 @@ export async function createRelationship(familyId: string, input: CreateRelation
         notes: input.notes,
       },
     });
-    return { relationship, addedPersonIds };
+
+    // PARENT links: also add the child (with their descendants and spouses)
+    // to the other families the user ticked in the preview. Only families the
+    // parent actually belongs to are honoured.
+    const addedElsewhere: FamilyAddition[] = [];
+    if (input.relationshipType === RelationshipType.PARENT && input.alsoAddToFamilyIds.length > 0) {
+      const allowed = await previewChildFamilies(familyId, personId, relatedPersonId, tx);
+      for (const target of allowed.filter((f) => input.alsoAddToFamilyIds.includes(f.familyId))) {
+        const personIds = target.people.map((p) => p.id);
+        await tx.familyMembership.createMany({
+          data: personIds.map((pid) => ({ familyId: target.familyId, personId: pid })),
+          skipDuplicates: true,
+        });
+        addedElsewhere.push({ familyId: target.familyId, personIds });
+      }
+    }
+
+    return { relationship, addedPersonIds, addedElsewhere };
   });
 }
 

@@ -228,14 +228,14 @@ export class FamilyTreeViewComponent {
    */
   private offerUndo(result: LinkResult): void {
     const familyId = this.familyId();
-    const { relationshipIds, addedPersonIds, createdPersonId } = result.undo;
+    const { relationshipIds, addedPersonIds, addedElsewhere, createdPersonId } = result.undo;
     this.snackBar
       .open(result.message, 'UNDO', { duration: 10_000 })
       .onAction()
       .pipe(
         switchMap(() =>
-          relationshipIds.length || addedPersonIds.length
-            ? this.relationshipsApi.undoLink(familyId, relationshipIds, addedPersonIds)
+          relationshipIds.length || addedPersonIds.length || addedElsewhere.length
+            ? this.relationshipsApi.undoLink(familyId, relationshipIds, addedPersonIds, addedElsewhere)
             : of(undefined),
         ),
         switchMap(() => (createdPersonId ? this.personsApi.remove(createdPersonId) : of(undefined))),

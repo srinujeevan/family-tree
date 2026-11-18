@@ -14,6 +14,8 @@ export const createRelationshipSchema = z
     // Also add the newly linked person's descendants and their spouses to
     // this family (what the preview listed). Off by default.
     includeRelatives: z.boolean().optional().default(false),
+    // PARENT only: other families (of the parent) the child should also join.
+    alsoAddToFamilyIds: z.array(z.string().uuid()).max(50).optional().default([]),
   })
   .refine((data) => data.personId !== data.relatedPersonId, {
     message: "personId and relatedPersonId must be different",
@@ -30,9 +32,19 @@ export const previewAdditionsSchema = z.object({
 });
 export type PreviewAdditionsInput = z.infer<typeof previewAdditionsSchema>;
 
+export const previewChildFamiliesSchema = z.object({
+  parentId: z.string().uuid(),
+  childId: z.string().uuid().optional(),
+});
+export type PreviewChildFamiliesInput = z.infer<typeof previewChildFamiliesSchema>;
+
 export const undoLinkSchema = z.object({
   relationshipIds: z.array(z.string().uuid()).max(20).default([]),
   addedPersonIds: z.array(z.string().uuid()).max(1000).default([]),
+  addedElsewhere: z
+    .array(z.object({ familyId: z.string().uuid(), personIds: z.array(z.string().uuid()).max(1000) }))
+    .max(50)
+    .default([]),
 });
 export type UndoLinkInput = z.infer<typeof undoLinkSchema>;
 

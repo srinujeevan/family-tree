@@ -5,6 +5,7 @@ import * as relationshipsController from "./relationships.controller";
 import {
   createRelationshipSchema,
   previewAdditionsSchema,
+  previewChildFamiliesSchema,
   undoLinkSchema,
   updateRelationshipSchema,
 } from "./relationships.validation";
@@ -20,6 +21,12 @@ familyRelationshipsRouter.post("/", validateBody(createRelationshipSchema), rela
 familyRelationshipsRouter.get("/", relationshipsController.listRelationships);
 // Who linking these people into the family would also bring along (read-only).
 familyRelationshipsRouter.post("/preview", validateBody(previewAdditionsSchema), relationshipsController.previewAdditions);
+// Other families of a parent that a new/linked child could also join (read-only).
+familyRelationshipsRouter.post(
+  "/preview-child-families",
+  validateBody(previewChildFamiliesSchema),
+  relationshipsController.previewChildFamilies,
+);
 // Reverses one link action: its relationship rows + the people it added to this family.
 familyRelationshipsRouter.post("/undo", validateBody(undoLinkSchema), relationshipsController.undoLink);
 

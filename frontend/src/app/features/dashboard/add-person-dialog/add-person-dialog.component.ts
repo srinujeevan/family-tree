@@ -13,6 +13,7 @@ import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { FamilyTreeApiService } from '../../../core/services/family-tree-api.service';
 import { PersonsApiService } from '../../../core/services/persons-api.service';
 import {
+  ChildFamilyPreview,
   CreateRelationshipPayload,
   CreateRelationshipResponse,
   PreviewPerson,
@@ -22,8 +23,9 @@ import { Gender, Person } from '../../../shared/models/person.model';
 import { RelationshipType } from '../../../shared/models/relationship.model';
 import { ApiError } from '../../../shared/models/pagination.model';
 import { NO_PARENTS_RECORDED, relateAsSibling } from '../sibling-relation';
-import { LinkResult, collectLinkIds } from '../link-result';
+import { LinkResult, alsoAddedText, collectLinkIds } from '../link-result';
 import { RelativesPreviewComponent } from '../relatives-preview/relatives-preview.component';
+import { ChildFamiliesPreviewComponent } from '../child-families-preview/child-families-preview.component';
 
 export interface AddPersonDialogData {
   familyId: string;
@@ -67,6 +69,7 @@ function personLabel(person: Person): string {
     MatButtonModule,
     MatAutocompleteModule,
     RelativesPreviewComponent,
+    ChildFamiliesPreviewComponent,
   ],
   templateUrl: './add-person-dialog.component.html',
   styleUrl: './add-person-dialog.component.scss',
@@ -90,6 +93,10 @@ export class AddPersonDialogComponent {
   readonly errorMessage = signal<string | null>(null);
   /** Set when relating to the chosen person would bring their relatives along. */
   readonly previewPeople = signal<PreviewPerson[] | null>(null);
+  /** Set when the chosen parent is also in other families - the dialog then asks about adding the child there. */
+  readonly childFamilies = signal<ChildFamilyPreview[] | null>(null);
+  /** The choice made in the relatives preview, carried into the save. */
+  private includeRelatives = false;
 
   readonly form = this.fb.nonNullable.group({
     firstName: ['', [Validators.required, Validators.maxLength(100)]],
@@ -122,14 +129,14 @@ export class AddPersonDialogComponent {
     const value = (event.target as HTMLInputElement).value;
     this.searchText.set(value);
     this.selectedPerson.set(null);
-    this.previewPeople.set(null);
+    this.resetPreviews();
     this.searchTerm$.next(value);
   }
 
   onOptionSelected(event: MatAutocompleteSelectedEvent): void {
     const person = event.option.value as Person;
     this.selectedPerson.set(person);
-    this.previewPeople.set(null);
+    this.resetPreviews();
     this.searchText.set(personLabel(person));
   }
 
@@ -150,7 +157,8 @@ export class AddPersonDialogComponent {
     this.errorMessage.set(null);
 
     if (!relateTo || this.form.controls.relationOption.value === 'SIBLING_OF') {
-      this.save(false);
+      this.includeRelatives = false;
+      this.save([]);
       return;
     }
 
@@ -161,15 +169,52 @@ export class AddPersonDialogComponent {
         if (people.some((p) => p.reason !== 'linked')) {
           this.previewPeople.set(people);
         } else {
-          this.save(false);
+          this.chooseRelatives(false);
         }
       },
       error: (err: unknown) => this.fail(err),
     });
   }
 
-  /** Step 2: create the person, then the relation (optionally with the previewed relatives). */
-  save(includeRelatives: boolean): void {
+  /**
+   * Step 2: for "New person is child of <parent>", check whether that parent
+   * is also in other families - if so, ask whether the new child should join
+   * those too. (The new person has no id yet; the backend works it out.)
+   */
+  chooseRelatives(includeRelatives: boolean): void {
+    this.includeRelatives = includeRelatives;
+    const parent = this.selectedPerson();
+    if (this.form.controls.relationOption.value !== 'CHILD_OF' || !parent) {
+      this.save([]);
+      return;
+    }
+    this.saving.set(true);
+    this.relationshipsApi.previewChildFamilies(this.data.familyId, parent.id).subscribe({
+      next: ({ families }) => {
+        this.saving.set(false);
+        if (families.length > 0) {
+          this.childFamilies.set(families);
+        } else {
+          this.save([]);
+        }
+      },
+      error: (err: unknown) => this.fail(err),
+    });
+  }
+
+  /** Back from either preview: start over from the form. Nothing has been saved yet. */
+  resetPreviews(): void {
+    this.previewPeople.set(null);
+    this.childFamilies.set(null);
+  }
+
+  /** Name to show for the new child in the families preview. */
+  newPersonName(): string {
+    return this.form.controls.firstName.value.trim() || 'the new person';
+  }
+
+  /** Step 3: create the person, then the relation with the choices from the previews. */
+  save(alsoAddToFamilyIds: string[]): void {
     if (this.saving()) {
       return;
     }
@@ -186,7 +231,7 @@ export class AddPersonDialogComponent {
         dateOfBirth: value.dateOfBirth || undefined,
       })
       .subscribe({
-        next: (res) => this.maybeCreateRelation(res.person, value.relateEnabled, value.relationOption, includeRelatives),
+        next: (res) => this.maybeCreateRelation(res.person, value.relateEnabled, value.relationOption, alsoAddToFamilyIds),
         error: (err: unknown) => this.fail(err),
       });
   }
@@ -195,25 +240,29 @@ export class AddPersonDialogComponent {
     person: Person,
     relateEnabled: boolean,
     relationOption: RelationOption,
-    includeRelatives: boolean,
+    alsoAddToFamilyIds: string[],
   ): void {
     const relatedPerson = this.selectedPerson();
     if (!relateEnabled || !relatedPerson) {
       this.saving.set(false);
       const result: LinkResult = {
         message: `Added ${person.firstName}.`,
-        undo: { relationshipIds: [], addedPersonIds: [], createdPersonId: person.id },
+        undo: { relationshipIds: [], addedPersonIds: [], addedElsewhere: [], createdPersonId: person.id },
       };
       this.dialogRef.close(result);
       return;
     }
+    const familyNames = (this.childFamilies() ?? [])
+      .filter((f) => alsoAddToFamilyIds.includes(f.familyId))
+      .map((f) => f.familyName);
 
     const request$: Observable<CreateRelationshipResponse | CreateRelationshipResponse[]> =
       relationOption === 'SIBLING_OF'
         ? relateAsSibling(this.familyTreeApi, this.relationshipsApi, this.data.familyId, person.id, relatedPerson.id)
         : this.relationshipsApi.create(this.data.familyId, {
             ...this.buildRelationshipPayload(person.id, relatedPerson.id, relationOption),
-            includeRelatives,
+            includeRelatives: this.includeRelatives,
+            alsoAddToFamilyIds,
           });
 
     request$.subscribe({
@@ -224,7 +273,8 @@ export class AddPersonDialogComponent {
         const result: LinkResult = {
           message:
             `Added ${person.firstName}, linked to ${relatedPerson.firstName}.` +
-            (others > 0 ? ` Also added ${others} ${others === 1 ? 'relative' : 'relatives'} to this family.` : ''),
+            (others > 0 ? ` Also added ${others} ${others === 1 ? 'relative' : 'relatives'} to this family.` : '') +
+            alsoAddedText(familyNames),
           undo: { ...ids, createdPersonId: person.id },
         };
         this.dialogRef.close(result);
