@@ -40,9 +40,130 @@ function canonicalizeIfSpouse(
   return [personId, relatedPersonId];
 }
 
+/** Safety cap so one link can never pull in an unbounded number of people. */
+const MAX_RELATIVES = 500;
+
+export type AdditionReason = "linked" | "descendant" | "spouse";
+
+export interface PreviewPerson {
+  id: string;
+  firstName: string;
+  lastName: string | null;
+  reason: AdditionReason;
+}
+
+/**
+ * Who linking `personIds` into `familyId` would bring along. For each of
+ * them who isn't a member yet: that person ("linked"), all their descendants
+ * through PARENT edges ("descendant"), and the spouses of everyone in that
+ * branch ("spouse") - so e.g. marrying ABC (family 123) to XYZ (family 456)
+ * from 456 offers ABC's children and grandchildren, with their spouses, so
+ * every grandchild shows both parents. Edges recorded in any family count.
+ * People already in the family are never listed.
+ */
+export async function previewAdditions(
+  familyId: string,
+  personIds: string[],
+  client: Prisma.TransactionClient | typeof prisma = prisma,
+): Promise<PreviewPerson[]> {
+  const members = new Set(
+    (await client.familyMembership.findMany({ where: { familyId }, select: { personId: true } })).map((m) => m.personId),
+  );
+  const reasons = new Map<string, AdditionReason>();
+  const roots = [...new Set(personIds)].filter((id) => !members.has(id));
+  for (const id of roots) {
+    reasons.set(id, "linked");
+  }
+
+  // Descendants, generation by generation.
+  let frontier = roots;
+  while (frontier.length > 0 && reasons.size < MAX_RELATIVES) {
+    const childEdges = await client.personRelationship.findMany({
+      where: { relationshipType: RelationshipType.PARENT, personId: { in: frontier } },
+      select: { relatedPersonId: true },
+    });
+    const next: string[] = [];
+    for (const { relatedPersonId } of childEdges) {
+      if (!reasons.has(relatedPersonId)) {
+        reasons.set(relatedPersonId, "descendant");
+        next.push(relatedPersonId);
+      }
+    }
+    frontier = next;
+  }
+
+  // Spouses of everyone in the branch (incl. the linked person's own other spouses).
+  const branch = [...reasons.keys()];
+  if (branch.length > 0) {
+    const spouseEdges = await client.personRelationship.findMany({
+      where: {
+        relationshipType: RelationshipType.SPOUSE,
+        OR: [{ personId: { in: branch } }, { relatedPersonId: { in: branch } }],
+      },
+      select: { personId: true, relatedPersonId: true },
+    });
+    for (const edge of spouseEdges) {
+      for (const id of [edge.personId, edge.relatedPersonId]) {
+        if (!reasons.has(id)) {
+          reasons.set(id, "spouse");
+        }
+      }
+    }
+  }
+
+  const ids = [...reasons.keys()].filter((id) => !members.has(id)).slice(0, MAX_RELATIVES);
+  if (ids.length === 0) {
+    return [];
+  }
+  const persons = await client.person.findMany({
+    where: { id: { in: ids } },
+    select: { id: true, firstName: true, lastName: true },
+  });
+  const order: Record<AdditionReason, number> = { linked: 0, descendant: 1, spouse: 2 };
+  return persons
+    .map((p) => ({ ...p, reason: reasons.get(p.id)! }))
+    .sort((a, b) => order[a.reason] - order[b.reason] || a.firstName.localeCompare(b.firstName));
+}
+
+/**
+ * Reverses one link action (the UNDO bar): deletes the given relationship
+ * rows of this family and removes the given people from this family again.
+ * Nobody is deleted, and a person is only removed from this family if they
+ * still belong to at least one other family - never left orphaned.
+ */
+export async function undoLink(familyId: string, relationshipIds: string[], addedPersonIds: string[]): Promise<void> {
+  await prisma.$transaction(async (tx) => {
+    if (relationshipIds.length > 0) {
+      await tx.personRelationship.deleteMany({ where: { id: { in: relationshipIds }, familyId } });
+    }
+    if (addedPersonIds.length === 0) {
+      return;
+    }
+    const otherMemberships = await tx.familyMembership.findMany({
+      where: { personId: { in: addedPersonIds }, familyId: { not: familyId } },
+      select: { personId: true },
+    });
+    const safeToRemove = [...new Set(otherMemberships.map((m) => m.personId))];
+    if (safeToRemove.length > 0) {
+      await tx.familyMembership.deleteMany({ where: { familyId, personId: { in: safeToRemove } } });
+    }
+  });
+}
+
 export async function createRelationship(familyId: string, input: CreateRelationshipInput) {
   return prisma.$transaction(async (tx) => {
+    // Work out who joins the family BEFORE adding anyone, so the result
+    // lists exactly what this action added (that's what UNDO removes).
+    const preview = await previewAdditions(familyId, [input.personId, input.relatedPersonId], tx);
+    const addedPersonIds = preview.filter((p) => input.includeRelatives || p.reason === "linked").map((p) => p.id);
+
     await ensureBothAreMembers(tx, familyId, input.personId, input.relatedPersonId);
+    if (addedPersonIds.length > 0) {
+      await tx.familyMembership.createMany({
+        data: addedPersonIds.map((personId) => ({ familyId, personId })),
+        skipDuplicates: true,
+      });
+    }
 
     const [personId, relatedPersonId] = canonicalizeIfSpouse(
       input.relationshipType,
@@ -57,7 +178,7 @@ export async function createRelationship(familyId: string, input: CreateRelation
       }
     }
 
-    return tx.personRelationship.create({
+    const relationship = await tx.personRelationship.create({
       data: {
         familyId,
         personId,
@@ -68,6 +189,7 @@ export async function createRelationship(familyId: string, input: CreateRelation
         notes: input.notes,
       },
     });
+    return { relationship, addedPersonIds };
   });
 }
 
@@ -105,12 +227,26 @@ export async function deleteRelationship(relationshipId: string): Promise<void> 
  * Whole-family graph in one call - all member persons plus every
  * relationship edge between them. Intentionally one query pair, not one
  * request per person, so rendering a tree doesn't fan out into N+1 calls.
+ *
+ * Edges are included whichever family they were recorded under, as long as
+ * both people are members here - so a couple's children recorded in one
+ * spouse's family are drawn connected in the other spouse's family too. The
+ * same fact recorded under two families is drawn once.
  */
 export async function getFamilyTree(familyId: string) {
-  const [persons, relationships] = await Promise.all([
-    prisma.person.findMany({ where: { memberships: { some: { familyId } } } }),
-    prisma.personRelationship.findMany({ where: { familyId } }),
-  ]);
+  const persons = await prisma.person.findMany({ where: { memberships: { some: { familyId } } } });
+  const memberIds = persons.map((p) => p.id);
+  const allEdges = await prisma.personRelationship.findMany({
+    where: { personId: { in: memberIds }, relatedPersonId: { in: memberIds } },
+    orderBy: { createdAt: "asc" },
+  });
+  const seen = new Set<string>();
+  const relationships = allEdges.filter((r) => {
+    const key = `${r.relationshipType}:${r.personId}:${r.relatedPersonId}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 
   return {
     nodes: persons,

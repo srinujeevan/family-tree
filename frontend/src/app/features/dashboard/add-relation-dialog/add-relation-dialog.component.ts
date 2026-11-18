@@ -7,15 +7,22 @@ import { MatSelectModule } from '@angular/material/select';
 import { MatButtonModule } from '@angular/material/button';
 import { MatAutocompleteModule, MatAutocompleteSelectedEvent } from '@angular/material/autocomplete';
 import { HttpErrorResponse } from '@angular/common/http';
-import { Subject, debounceTime, distinctUntilChanged, switchMap } from 'rxjs';
+import { Observable, Subject, debounceTime, distinctUntilChanged, switchMap } from 'rxjs';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { FamilyTreeApiService } from '../../../core/services/family-tree-api.service';
 import { PersonsApiService } from '../../../core/services/persons-api.service';
-import { RelationshipsApiService, CreateRelationshipPayload } from '../../../core/services/relationships-api.service';
+import {
+  CreateRelationshipPayload,
+  CreateRelationshipResponse,
+  PreviewPerson,
+  RelationshipsApiService,
+} from '../../../core/services/relationships-api.service';
 import { Person } from '../../../shared/models/person.model';
 import { RelationshipType } from '../../../shared/models/relationship.model';
 import { ApiError } from '../../../shared/models/pagination.model';
 import { NO_PARENTS_RECORDED, relateAsSibling } from '../sibling-relation';
+import { LinkResult, collectLinkIds } from '../link-result';
+import { RelativesPreviewComponent } from '../relatives-preview/relatives-preview.component';
 
 export interface AddRelationDialogData {
   familyId: string;
@@ -50,6 +57,7 @@ function personLabel(person: Person): string {
     MatSelectModule,
     MatButtonModule,
     MatAutocompleteModule,
+    RelativesPreviewComponent,
   ],
   templateUrl: './add-relation-dialog.component.html',
   styleUrl: './add-relation-dialog.component.scss',
@@ -68,6 +76,8 @@ export class AddRelationDialogComponent {
   readonly searchText = signal('');
   readonly saving = signal(false);
   readonly errorMessage = signal<string | null>(null);
+  /** Set when linking would bring relatives along - the dialog then shows the preview. */
+  readonly previewPeople = signal<PreviewPerson[] | null>(null);
   readonly personLabel = personLabel;
 
   readonly form = this.fb.nonNullable.group({
@@ -97,15 +107,18 @@ export class AddRelationDialogComponent {
     const value = (event.target as HTMLInputElement).value;
     this.searchText.set(value);
     this.selectedPerson.set(null);
+    this.previewPeople.set(null);
     this.searchTerm$.next(value);
   }
 
   onOptionSelected(event: MatAutocompleteSelectedEvent): void {
     const person = event.option.value as Person;
     this.selectedPerson.set(person);
+    this.previewPeople.set(null);
     this.searchText.set(this.personLabel(person));
   }
 
+  /** Step 1: check who would come along; show the preview if anyone besides the linked person would. */
   submit(): void {
     const selected = this.selectedPerson();
     if (!selected) {
@@ -115,23 +128,66 @@ export class AddRelationDialogComponent {
     if (this.saving()) {
       return;
     }
+    this.errorMessage.set(null);
+    const { relationOption } = this.form.getRawValue();
 
+    // Sibling links attach to existing parents in this family - nobody new comes along.
+    if (relationOption === 'SIBLING_OF') {
+      this.save(false);
+      return;
+    }
+
+    this.saving.set(true);
+    this.relationshipsApi.previewAdditions(this.data.familyId, [this.data.anchorPerson.id, selected.id]).subscribe({
+      next: ({ people }) => {
+        this.saving.set(false);
+        if (people.some((p) => p.reason !== 'linked')) {
+          this.previewPeople.set(people);
+        } else {
+          this.save(false);
+        }
+      },
+      error: (err: unknown) => {
+        this.saving.set(false);
+        this.errorMessage.set(this.extractMessage(err));
+      },
+    });
+  }
+
+  /** Step 2: save the link, optionally adding the previewed relatives too. */
+  save(includeRelatives: boolean): void {
+    const selected = this.selectedPerson();
+    if (!selected || this.saving()) {
+      return;
+    }
     this.saving.set(true);
     this.errorMessage.set(null);
     const { relationOption } = this.form.getRawValue();
 
-    const request$ =
+    const request$: Observable<CreateRelationshipResponse | CreateRelationshipResponse[]> =
       relationOption === 'SIBLING_OF'
         ? relateAsSibling(this.familyTreeApi, this.relationshipsApi, this.data.familyId, this.data.anchorPerson.id, selected.id)
-        : this.relationshipsApi.create(this.data.familyId, this.buildPayload(selected.id, relationOption));
+        : this.relationshipsApi.create(this.data.familyId, {
+            ...this.buildPayload(selected.id, relationOption),
+            includeRelatives,
+          });
 
     request$.subscribe({
       next: (res) => {
         this.saving.set(false);
-        this.dialogRef.close(res ?? true);
+        const ids = collectLinkIds(res);
+        const others = ids.addedPersonIds.filter((id) => id !== selected.id).length;
+        const result: LinkResult = {
+          message:
+            `Linked ${this.data.anchorPerson.name} and ${selected.firstName}.` +
+            (others > 0 ? ` Added ${others} ${others === 1 ? 'relative' : 'relatives'} to this family.` : ''),
+          undo: ids,
+        };
+        this.dialogRef.close(result);
       },
       error: (err: unknown) => {
         this.saving.set(false);
+        this.previewPeople.set(null);
         this.errorMessage.set(this.extractMessage(err, selected));
       },
     });

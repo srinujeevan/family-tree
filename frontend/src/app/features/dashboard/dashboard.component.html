@@ -2,7 +2,9 @@
   <span>Family Tree</span>
   <span class="spacer"></span>
   @if (currentUser(); as user) {
-    <span class="user-chip">{{ user.fullName }} &middot; {{ user.role }}</span>
+    <span class="user-chip" [title]="user.fullName + ' · ' + user.role">
+      {{ user.fullName }}<span class="user-role"> &middot; {{ user.role }}</span>
+    </span>
   }
   <button mat-icon-button (click)="logout()" aria-label="Log out" title="Log out">
     <mat-icon>logout</mat-icon>
@@ -48,7 +50,11 @@
     }
 
     @if (selectedFamilyId(); as familyId) {
-      <app-family-tree-view [familyId]="familyId" [familyName]="selectedFamilyName()" />
+      <app-family-tree-view
+        [familyId]="familyId"
+        [familyName]="selectedFamilyName()"
+        (membersChanged)="refreshCounts()"
+      />
     }
   }
 </div>

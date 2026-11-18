@@ -1,6 +1,6 @@
 import { Observable, forkJoin, switchMap, throwError } from 'rxjs';
 import { FamilyTreeApiService } from '../../core/services/family-tree-api.service';
-import { RelationshipsApiService } from '../../core/services/relationships-api.service';
+import { CreateRelationshipResponse, RelationshipsApiService } from '../../core/services/relationships-api.service';
 
 export const NO_PARENTS_RECORDED = 'NO_PARENTS_RECORDED';
 
@@ -21,7 +21,7 @@ export function relateAsSibling(
   familyId: string,
   personId: string,
   siblingOfPersonId: string,
-): Observable<unknown> {
+): Observable<CreateRelationshipResponse[]> {
   return familyTreeApi.getAncestors(familyId, siblingOfPersonId).pipe(
     switchMap((res) => {
       const parents = res.data.filter((p) => p.depth === 1);

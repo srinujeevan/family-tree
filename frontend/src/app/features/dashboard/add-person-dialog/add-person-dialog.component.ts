@@ -8,15 +8,22 @@ import { MatCheckboxModule } from '@angular/material/checkbox';
 import { MatButtonModule } from '@angular/material/button';
 import { MatAutocompleteModule, MatAutocompleteSelectedEvent } from '@angular/material/autocomplete';
 import { HttpErrorResponse } from '@angular/common/http';
-import { Subject, debounceTime, distinctUntilChanged, switchMap } from 'rxjs';
+import { Observable, Subject, debounceTime, distinctUntilChanged, switchMap } from 'rxjs';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { FamilyTreeApiService } from '../../../core/services/family-tree-api.service';
 import { PersonsApiService } from '../../../core/services/persons-api.service';
-import { RelationshipsApiService, CreateRelationshipPayload } from '../../../core/services/relationships-api.service';
+import {
+  CreateRelationshipPayload,
+  CreateRelationshipResponse,
+  PreviewPerson,
+  RelationshipsApiService,
+} from '../../../core/services/relationships-api.service';
 import { Gender, Person } from '../../../shared/models/person.model';
 import { RelationshipType } from '../../../shared/models/relationship.model';
 import { ApiError } from '../../../shared/models/pagination.model';
 import { NO_PARENTS_RECORDED, relateAsSibling } from '../sibling-relation';
+import { LinkResult, collectLinkIds } from '../link-result';
+import { RelativesPreviewComponent } from '../relatives-preview/relatives-preview.component';
 
 export interface AddPersonDialogData {
   familyId: string;
@@ -59,6 +66,7 @@ function personLabel(person: Person): string {
     MatCheckboxModule,
     MatButtonModule,
     MatAutocompleteModule,
+    RelativesPreviewComponent,
   ],
   templateUrl: './add-person-dialog.component.html',
   styleUrl: './add-person-dialog.component.scss',
@@ -80,6 +88,8 @@ export class AddPersonDialogComponent {
   readonly searchText = signal('');
   readonly saving = signal(false);
   readonly errorMessage = signal<string | null>(null);
+  /** Set when relating to the chosen person would bring their relatives along. */
+  readonly previewPeople = signal<PreviewPerson[] | null>(null);
 
   readonly form = this.fb.nonNullable.group({
     firstName: ['', [Validators.required, Validators.maxLength(100)]],
@@ -112,25 +122,57 @@ export class AddPersonDialogComponent {
     const value = (event.target as HTMLInputElement).value;
     this.searchText.set(value);
     this.selectedPerson.set(null);
+    this.previewPeople.set(null);
     this.searchTerm$.next(value);
   }
 
   onOptionSelected(event: MatAutocompleteSelectedEvent): void {
     const person = event.option.value as Person;
     this.selectedPerson.set(person);
+    this.previewPeople.set(null);
     this.searchText.set(personLabel(person));
   }
 
+  /**
+   * Step 1: if relating to someone, check who would come along BEFORE
+   * creating the new person - so "Back" leaves nothing half-saved.
+   */
   submit(): void {
     if (this.form.invalid || this.saving()) {
       this.form.markAllAsTouched();
       return;
     }
-    if (this.form.controls.relateEnabled.value && !this.selectedPerson()) {
+    const relateTo = this.form.controls.relateEnabled.value ? this.selectedPerson() : null;
+    if (this.form.controls.relateEnabled.value && !relateTo) {
       this.errorMessage.set('Choose a family member to relate to, or turn off "Add a relation".');
       return;
     }
+    this.errorMessage.set(null);
 
+    if (!relateTo || this.form.controls.relationOption.value === 'SIBLING_OF') {
+      this.save(false);
+      return;
+    }
+
+    this.saving.set(true);
+    this.relationshipsApi.previewAdditions(this.data.familyId, [relateTo.id]).subscribe({
+      next: ({ people }) => {
+        this.saving.set(false);
+        if (people.some((p) => p.reason !== 'linked')) {
+          this.previewPeople.set(people);
+        } else {
+          this.save(false);
+        }
+      },
+      error: (err: unknown) => this.fail(err),
+    });
+  }
+
+  /** Step 2: create the person, then the relation (optionally with the previewed relatives). */
+  save(includeRelatives: boolean): void {
+    if (this.saving()) {
+      return;
+    }
     this.saving.set(true);
     this.errorMessage.set(null);
     const value = this.form.getRawValue();
@@ -144,28 +186,48 @@ export class AddPersonDialogComponent {
         dateOfBirth: value.dateOfBirth || undefined,
       })
       .subscribe({
-        next: (res) => this.maybeCreateRelation(res.person, value.relateEnabled, value.relationOption),
+        next: (res) => this.maybeCreateRelation(res.person, value.relateEnabled, value.relationOption, includeRelatives),
         error: (err: unknown) => this.fail(err),
       });
   }
 
-  private maybeCreateRelation(person: Person, relateEnabled: boolean, relationOption: RelationOption): void {
+  private maybeCreateRelation(
+    person: Person,
+    relateEnabled: boolean,
+    relationOption: RelationOption,
+    includeRelatives: boolean,
+  ): void {
     const relatedPerson = this.selectedPerson();
     if (!relateEnabled || !relatedPerson) {
       this.saving.set(false);
-      this.dialogRef.close(person);
+      const result: LinkResult = {
+        message: `Added ${person.firstName}.`,
+        undo: { relationshipIds: [], addedPersonIds: [], createdPersonId: person.id },
+      };
+      this.dialogRef.close(result);
       return;
     }
 
-    const request$ =
+    const request$: Observable<CreateRelationshipResponse | CreateRelationshipResponse[]> =
       relationOption === 'SIBLING_OF'
         ? relateAsSibling(this.familyTreeApi, this.relationshipsApi, this.data.familyId, person.id, relatedPerson.id)
-        : this.relationshipsApi.create(this.data.familyId, this.buildRelationshipPayload(person.id, relatedPerson.id, relationOption));
+        : this.relationshipsApi.create(this.data.familyId, {
+            ...this.buildRelationshipPayload(person.id, relatedPerson.id, relationOption),
+            includeRelatives,
+          });
 
     request$.subscribe({
-      next: () => {
+      next: (res) => {
         this.saving.set(false);
-        this.dialogRef.close(person);
+        const ids = collectLinkIds(res);
+        const others = ids.addedPersonIds.filter((id) => id !== relatedPerson.id && id !== person.id).length;
+        const result: LinkResult = {
+          message:
+            `Added ${person.firstName}, linked to ${relatedPerson.firstName}.` +
+            (others > 0 ? ` Also added ${others} ${others === 1 ? 'relative' : 'relatives'} to this family.` : ''),
+          undo: { ...ids, createdPersonId: person.id },
+        };
+        this.dialogRef.close(result);
       },
       error: (err: unknown) => {
         // The person was created successfully even if the relation failed -

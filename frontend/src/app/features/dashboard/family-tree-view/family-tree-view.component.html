@@ -1,7 +1,7 @@
 <div class="tree-toolbar">
   <button mat-stroked-button (click)="openAddPerson()">
     <mat-icon>person_add</mat-icon>
-    Add person
+    <span>Add person</span>
   </button>
   <button
     mat-stroked-button
@@ -10,19 +10,26 @@
     title="Download the family tree as a PDF"
   >
     <mat-icon>picture_as_pdf</mat-icon>
-    {{ exporting() ? 'Preparing PDF...' : 'Download PDF' }}
+    @if (exporting()) {
+      <span>Preparing...</span>
+    } @else {
+      <span><span class="hide-on-phone">Download </span>PDF</span>
+    }
   </button>
   @if (exportError(); as message) {
     <span class="export-error" role="alert">{{ message }}</span>
   }
   <span class="spacer"></span>
-  <button mat-icon-button (click)="zoomOut()" aria-label="Zoom out" title="Zoom out">
-    <mat-icon>remove</mat-icon>
-  </button>
-  <button mat-button (click)="resetZoom()" title="Reset zoom">{{ (zoom() * 100).toFixed(0) }}%</button>
-  <button mat-icon-button (click)="zoomIn()" aria-label="Zoom in" title="Zoom in">
-    <mat-icon>add</mat-icon>
-  </button>
+  <!-- Kept together so the zoom controls never split across lines. -->
+  <div class="zoom-group">
+    <button mat-icon-button (click)="zoomOut()" aria-label="Zoom out" title="Zoom out">
+      <mat-icon>remove</mat-icon>
+    </button>
+    <button mat-button class="zoom-label" (click)="resetZoom()" title="Reset zoom">{{ (zoom() * 100).toFixed(0) }}%</button>
+    <button mat-icon-button (click)="zoomIn()" aria-label="Zoom in" title="Zoom in">
+      <mat-icon>add</mat-icon>
+    </button>
+  </div>
 </div>
 
 <div class="tree-canvas">
@@ -43,7 +50,7 @@
         <button mat-flat-button color="primary" (click)="openAddPerson()">Add the first person</button>
       </div>
     } @else {
-      <div class="svg-scroll">
+      <div class="svg-scroll" #svgScroll>
         <svg #treeSvg [attr.viewBox]="viewBox()" [attr.width]="l.width * zoom()" [attr.height]="l.height * zoom()">
           <defs>
             <linearGradient id="treeBg" x1="0" y1="0" x2="0" y2="1">

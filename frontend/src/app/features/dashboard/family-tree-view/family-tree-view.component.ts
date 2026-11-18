@@ -1,10 +1,27 @@
-import { Component, ElementRef, computed, effect, inject, input, signal, viewChild } from '@angular/core';
+import {
+  Component,
+  ElementRef,
+  Injector,
+  afterNextRender,
+  computed,
+  effect,
+  inject,
+  input,
+  output,
+  signal,
+  viewChild,
+} from '@angular/core';
 import { MatIconModule } from '@angular/material/icon';
 import { MatButtonModule } from '@angular/material/button';
 import { MatMenuModule } from '@angular/material/menu';
 import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
 import { MatDialog, MatDialogModule } from '@angular/material/dialog';
+import { MatSnackBar, MatSnackBarModule } from '@angular/material/snack-bar';
+import { of, switchMap } from 'rxjs';
 import { FamilyTreeApiService } from '../../../core/services/family-tree-api.service';
+import { PersonsApiService } from '../../../core/services/persons-api.service';
+import { RelationshipsApiService } from '../../../core/services/relationships-api.service';
+import { LinkResult } from '../link-result';
 import { Person } from '../../../shared/models/person.model';
 import { AddPersonDialogComponent } from '../add-person-dialog/add-person-dialog.component';
 import { EditPersonDialogComponent } from '../edit-person-dialog/edit-person-dialog.component';
@@ -15,7 +32,7 @@ import { exportTreeSvgToPdf } from './tree-pdf-export';
 @Component({
   selector: 'app-family-tree-view',
   standalone: true,
-  imports: [MatIconModule, MatButtonModule, MatMenuModule, MatProgressSpinnerModule, MatDialogModule],
+  imports: [MatIconModule, MatButtonModule, MatMenuModule, MatProgressSpinnerModule, MatDialogModule, MatSnackBarModule],
   templateUrl: './family-tree-view.component.html',
   styleUrl: './family-tree-view.component.scss',
 })
@@ -23,13 +40,22 @@ export class FamilyTreeViewComponent {
   readonly familyId = input.required<string>();
   /** Used as the PDF title and file name. */
   readonly familyName = input<string>('Family Tree');
+  /** Fired after people were added, linked, deleted or an action was undone - so member counts can refresh. */
+  readonly membersChanged = output<void>();
 
   private readonly treeSvg = viewChild<ElementRef<SVGSVGElement>>('treeSvg');
+  private readonly svgScroll = viewChild<ElementRef<HTMLDivElement>>('svgScroll');
+  private readonly injector = inject(Injector);
+  /** True until the first load of the current family has been fitted to the screen. */
+  private fitPending = true;
   readonly exporting = signal(false);
   readonly exportError = signal<string | null>(null);
 
   private readonly treeApi = inject(FamilyTreeApiService);
+  private readonly relationshipsApi = inject(RelationshipsApiService);
+  private readonly personsApi = inject(PersonsApiService);
   private readonly dialog = inject(MatDialog);
+  private readonly snackBar = inject(MatSnackBar);
 
   readonly nodeRadius = NODE_RADIUS;
   readonly loading = signal(true);
@@ -45,6 +71,7 @@ export class FamilyTreeViewComponent {
   constructor() {
     effect(() => {
       this.familyId(); // track
+      this.fitPending = true;
       this.load();
     });
   }
@@ -56,6 +83,12 @@ export class FamilyTreeViewComponent {
       next: (res) => {
         this.layout.set(buildTreeLayout(res.nodes, res.edges));
         this.loading.set(false);
+        // Only on the first load of a family - reloads after adding/editing
+        // someone keep the zoom and scroll position the user chose.
+        if (this.fitPending) {
+          this.fitPending = false;
+          afterNextRender(() => this.fitToScreen(), { injector: this.injector });
+        }
       },
       error: () => {
         this.loadError.set('Could not load this family tree.');
@@ -69,7 +102,28 @@ export class FamilyTreeViewComponent {
   }
 
   zoomOut(): void {
-    this.zoom.set(Math.max(0.4, this.zoom() - 0.15));
+    this.zoom.set(Math.max(0.25, this.zoom() - 0.15));
+  }
+
+  /**
+   * On narrow screens (phones), shrink a wide tree to fit the width - but not
+   * below 60%, where names become hard to read - then center the scroll
+   * position so the user starts in the middle of the tree, not its left edge.
+   */
+  private fitToScreen(): void {
+    const box = this.svgScroll()?.nativeElement;
+    const layout = this.layout();
+    if (!box || !layout) {
+      return;
+    }
+    const fit = box.clientWidth / layout.width;
+    this.zoom.set(Math.min(1, Math.max(0.6, Math.round(fit * 100) / 100)));
+    afterNextRender(
+      () => {
+        box.scrollLeft = Math.max(0, (box.scrollWidth - box.clientWidth) / 2);
+      },
+      { injector: this.injector },
+    );
   }
 
   resetZoom(): void {
@@ -125,30 +179,77 @@ export class FamilyTreeViewComponent {
   openAddPerson(): void {
     const ref = this.dialog.open(AddPersonDialogComponent, {
       width: '480px',
+      maxWidth: '95vw',
       data: { familyId: this.familyId() },
     });
-    ref.afterClosed().subscribe((created) => {
-      if (created) this.load();
+    ref.afterClosed().subscribe((result?: LinkResult) => {
+      if (result) {
+        this.load();
+        this.membersChanged.emit();
+        this.offerUndo(result);
+      }
     });
   }
 
   openEditPerson(node: LayoutNode): void {
     const ref = this.dialog.open(EditPersonDialogComponent, {
       width: '480px',
+      maxWidth: '95vw',
       data: { person: node.person },
     });
     ref.afterClosed().subscribe((updated) => {
-      if (updated) this.load();
+      if (updated) {
+        this.load();
+        this.membersChanged.emit();
+      }
     });
   }
 
   openAddRelation(node: LayoutNode): void {
     const ref = this.dialog.open(AddRelationDialogComponent, {
       width: '460px',
+      maxWidth: '95vw',
       data: { familyId: this.familyId(), anchorPerson: { id: node.person.id, name: this.displayName(node.person) } },
     });
-    ref.afterClosed().subscribe((created) => {
-      if (created) this.load();
+    ref.afterClosed().subscribe((result?: LinkResult) => {
+      if (result) {
+        this.load();
+        this.membersChanged.emit();
+        this.offerUndo(result);
+      }
     });
+  }
+
+  /**
+   * 10-second "UNDO" bar after adding someone or linking relatives. UNDO
+   * removes the new relationship(s), takes the people that action added back
+   * out of this family (they stay in their own families), and deletes the
+   * person if the action created one.
+   */
+  private offerUndo(result: LinkResult): void {
+    const familyId = this.familyId();
+    const { relationshipIds, addedPersonIds, createdPersonId } = result.undo;
+    this.snackBar
+      .open(result.message, 'UNDO', { duration: 10_000 })
+      .onAction()
+      .pipe(
+        switchMap(() =>
+          relationshipIds.length || addedPersonIds.length
+            ? this.relationshipsApi.undoLink(familyId, relationshipIds, addedPersonIds)
+            : of(undefined),
+        ),
+        switchMap(() => (createdPersonId ? this.personsApi.remove(createdPersonId) : of(undefined))),
+      )
+      .subscribe({
+        next: () => {
+          this.load();
+          this.membersChanged.emit();
+          this.snackBar.open('Undone.', undefined, { duration: 3000 });
+        },
+        error: () => {
+          this.load();
+          this.snackBar.open('Could not undo - please fix it manually.', 'OK', { duration: 6000 });
+        },
+      });
   }
 }

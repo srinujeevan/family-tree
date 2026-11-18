@@ -2,7 +2,12 @@ import { Router } from "express";
 import { validateBody } from "../../common/validators/validate";
 import { authenticate } from "../../middleware/auth";
 import * as relationshipsController from "./relationships.controller";
-import { createRelationshipSchema, updateRelationshipSchema } from "./relationships.validation";
+import {
+  createRelationshipSchema,
+  previewAdditionsSchema,
+  undoLinkSchema,
+  updateRelationshipSchema,
+} from "./relationships.validation";
 
 /**
  * Mounted at /api/families/:familyId/relationships (mergeParams via the
@@ -13,6 +18,10 @@ export const familyRelationshipsRouter = Router({ mergeParams: true });
 familyRelationshipsRouter.use(authenticate);
 familyRelationshipsRouter.post("/", validateBody(createRelationshipSchema), relationshipsController.createRelationship);
 familyRelationshipsRouter.get("/", relationshipsController.listRelationships);
+// Who linking these people into the family would also bring along (read-only).
+familyRelationshipsRouter.post("/preview", validateBody(previewAdditionsSchema), relationshipsController.previewAdditions);
+// Reverses one link action: its relationship rows + the people it added to this family.
+familyRelationshipsRouter.post("/undo", validateBody(undoLinkSchema), relationshipsController.undoLink);
 
 /** Mounted at /api/families/:familyId (mergeParams via the parent router). */
 export const familyTreeRouter = Router({ mergeParams: true });

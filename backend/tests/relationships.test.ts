@@ -136,6 +136,76 @@ describe("relationships", () => {
     expect(membership).not.toBeNull();
   });
 
+  it("linking a couple across families previews, adds and undoes the whole branch below them", async () => {
+    // Family 123: ABC with two children; child1 is married (spouse from a
+    // third family) and has a grandchild. Family 456: XYZ.
+    const f123 = await createOwnerContext();
+    const f456 = await createOwnerContext();
+    const third = await createOwnerContext();
+    const abc = await f123.addPerson("ABC");
+    const child1 = await f123.addPerson("Child1");
+    const child2 = await f123.addPerson("Child2");
+    const grandchild = await f123.addPerson("Grandchild");
+    const inLaw = await third.addPerson("InLaw");
+    const xyz = await f456.addPerson("XYZ");
+    const link = (ctx: typeof f123, body: object) =>
+      request(app)
+        .post(`/api/families/${ctx.familyId}/relationships`)
+        .set("Authorization", `Bearer ${ctx.token}`)
+        .send(body);
+    await link(f123, { personId: abc, relatedPersonId: child1, relationshipType: RelationshipType.PARENT });
+    await link(f123, { personId: abc, relatedPersonId: child2, relationshipType: RelationshipType.PARENT });
+    await link(f123, { personId: child1, relatedPersonId: grandchild, relationshipType: RelationshipType.PARENT });
+    await link(f123, { personId: child1, relatedPersonId: inLaw, relationshipType: RelationshipType.SPOUSE });
+
+    // Preview from 456: ABC (linked), both children + grandchild (descendants), in-law (spouse). XYZ is already a member.
+    const preview = await request(app)
+      .post(`/api/families/${f456.familyId}/relationships/preview`)
+      .set("Authorization", `Bearer ${f456.token}`)
+      .send({ personIds: [xyz, abc] });
+    expect(preview.status).toBe(200);
+    const byId = Object.fromEntries(preview.body.people.map((p: { id: string; reason: string }) => [p.id, p.reason]));
+    expect(byId).toEqual({ [abc]: "linked", [child1]: "descendant", [child2]: "descendant", [grandchild]: "descendant", [inLaw]: "spouse" });
+
+    // Link with relatives: everyone joins 456, and the 123-recorded parent edges are drawn in 456's tree.
+    const res = await link(f456, { personId: xyz, relatedPersonId: abc, relationshipType: RelationshipType.SPOUSE, includeRelatives: true });
+    expect(res.status).toBe(201);
+    expect([...res.body.addedPersonIds].sort()).toEqual([abc, child1, child2, grandchild, inLaw].sort());
+    const tree = await request(app).get(`/api/families/${f456.familyId}/tree`).set("Authorization", `Bearer ${f456.token}`);
+    expect(tree.body.nodes).toHaveLength(6);
+    expect(tree.body.edges).toHaveLength(5); // XYZ-ABC spouse, 3 parent edges, child1-inLaw spouse
+
+    // Undo: the link is gone and 456 is back to just XYZ; nobody was deleted.
+    const undo = await request(app)
+      .post(`/api/families/${f456.familyId}/relationships/undo`)
+      .set("Authorization", `Bearer ${f456.token}`)
+      .send({ relationshipIds: [res.body.relationship.id], addedPersonIds: res.body.addedPersonIds });
+    expect(undo.status).toBe(204);
+    const after = await request(app).get(`/api/families/${f456.familyId}/tree`).set("Authorization", `Bearer ${f456.token}`);
+    expect(after.body.nodes.map((n: { id: string }) => n.id)).toEqual([xyz]);
+    expect(after.body.edges).toHaveLength(0);
+    expect(await prisma.person.count({ where: { id: { in: [abc, child1, child2, grandchild, inLaw] } } })).toBe(5);
+  });
+
+  it("linking without includeRelatives adds only the linked person, as before", async () => {
+    const f1 = await createOwnerContext();
+    const f2 = await createOwnerContext();
+    const parent = await f1.addPerson("Parent");
+    const kid = await f1.addPerson("Kid");
+    const spouse = await f2.addPerson("Spouse");
+    await request(app)
+      .post(`/api/families/${f1.familyId}/relationships`)
+      .set("Authorization", `Bearer ${f1.token}`)
+      .send({ personId: parent, relatedPersonId: kid, relationshipType: RelationshipType.PARENT });
+
+    const res = await request(app)
+      .post(`/api/families/${f2.familyId}/relationships`)
+      .set("Authorization", `Bearer ${f2.token}`)
+      .send({ personId: spouse, relatedPersonId: parent, relationshipType: RelationshipType.SPOUSE });
+    expect(res.status).toBe(201);
+    expect(res.body.addedPersonIds).toEqual([parent]);
+  });
+
   it("GET /tree returns all member nodes and relationship edges in one call", async () => {
     const { token, familyId, addPerson } = await createOwnerContext();
     const a = await addPerson("NodeA");

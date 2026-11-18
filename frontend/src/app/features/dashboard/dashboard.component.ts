@@ -65,12 +65,24 @@ export class DashboardComponent {
     });
   }
 
+  /**
+   * Re-fetches member counts after people are added/linked/removed in the
+   * tree. Deliberately skips the loading state - toggling it would unmount
+   * and reload the tree the user is looking at.
+   */
+  refreshCounts(): void {
+    this.familiesApi.list().subscribe({
+      next: (page) => this.families.set(page.data),
+      error: () => undefined,
+    });
+  }
+
   selectFamily(familyId: string): void {
     this.selectedFamilyId.set(familyId);
   }
 
   openCreateFamilyDialog(): void {
-    const ref = this.dialog.open(CreateFamilyDialogComponent, { width: '420px' });
+    const ref = this.dialog.open(CreateFamilyDialogComponent, { width: '420px', maxWidth: '95vw' });
     ref.afterClosed().subscribe((created: Family | undefined) => {
       if (created) {
         this.loadFamilies();

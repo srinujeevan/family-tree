@@ -66,3 +66,38 @@
   font-size: 0.875rem;
   margin: 0 0 8px;
 }
+
+// Phones: let the dialog use the screen width and stack paired fields.
+@media (max-width: 599px) {
+  .dialog-content {
+    min-width: 0;
+    max-height: 75vh;
+  }
+
+  .two-col {
+    flex-direction: column;
+    gap: 0;
+  }
+}
+
+@media (max-width: 599px) {
+  // Cancel + Save together on the first row; Delete drops to its own row.
+  .actions {
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    row-gap: 4px;
+  }
+
+  .actions .spacer {
+    display: none;
+  }
+
+  .delete-link {
+    order: 3;
+    margin-right: auto;
+  }
+
+  .delete-confirm {
+    margin: 0 16px 8px;
+  }
+}

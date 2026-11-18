@@ -1,13 +1,31 @@
 import type { Request, Response } from "express";
 import * as relationshipsService from "./relationships.service";
-import type { CreateRelationshipInput, UpdateRelationshipInput } from "./relationships.validation";
+import type {
+  CreateRelationshipInput,
+  PreviewAdditionsInput,
+  UndoLinkInput,
+  UpdateRelationshipInput,
+} from "./relationships.validation";
 
 export async function createRelationship(
   req: Request<{ familyId: string }, unknown, CreateRelationshipInput>,
   res: Response,
 ): Promise<void> {
-  const relationship = await relationshipsService.createRelationship(req.params.familyId, req.body);
-  res.status(201).json({ relationship });
+  const { relationship, addedPersonIds } = await relationshipsService.createRelationship(req.params.familyId, req.body);
+  res.status(201).json({ relationship, addedPersonIds });
+}
+
+export async function previewAdditions(
+  req: Request<{ familyId: string }, unknown, PreviewAdditionsInput>,
+  res: Response,
+): Promise<void> {
+  const people = await relationshipsService.previewAdditions(req.params.familyId, req.body.personIds);
+  res.json({ people });
+}
+
+export async function undoLink(req: Request<{ familyId: string }, unknown, UndoLinkInput>, res: Response): Promise<void> {
+  await relationshipsService.undoLink(req.params.familyId, req.body.relationshipIds, req.body.addedPersonIds);
+  res.status(204).send();
 }
 
 export async function listRelationships(req: Request<{ familyId: string }>, res: Response): Promise<void> {

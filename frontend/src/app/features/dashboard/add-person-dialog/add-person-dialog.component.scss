@@ -34,3 +34,16 @@
   font-size: 0.875rem;
   margin: 0 0 8px;
 }
+
+// Phones: let the dialog use the screen width and stack paired fields.
+@media (max-width: 599px) {
+  .dialog-content {
+    min-width: 0;
+    max-height: 75vh;
+  }
+
+  .two-col {
+    flex-direction: column;
+    gap: 0;
+  }
+}
